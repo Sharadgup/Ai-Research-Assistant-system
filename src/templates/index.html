@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Research Assistant & Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Include Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Include html2pdf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- Include Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Research Assistant</h1>
+        <p>Paste text below for in-depth analysis and report generation.</p>
+
+        <div class="input-area">
+            <label for="inputText">Input Text:</label>
+            <textarea id="inputText" rows="10" placeholder="Paste or type your text here..."></textarea> <!-- Reduced rows -->
+        </div>
+
+        <button id="generateBtn">Generate Report</button>
+
+        <div id="loadingIndicator" class="loading" style="display: none;">
+            <span id="loadingText">Generating report...</span> <span class="spinner"></span>
+        </div>
+
+        <!-- Report Area (includes charts and download button) -->
+        <div id="reportContainer" class="report-container" style="display: none;">
+            <h2>Generated Report:</h2>
+            <button id="downloadPdfBtn" class="download-btn">Download Report as PDF</button>
+            <div id="reportOutput" class="report-content"></div>
+            <div class="charts-area">
+                <h3>Visualizations:</h3>
+                <div class="chart-container" id="keywordChartContainer" style="display: none;">
+                     <canvas id="keywordChart"></canvas>
+                </div>
+                 <div class="chart-container" id="sentimentChartContainer" style="display: none;">
+                     <canvas id="sentimentChart"></canvas>
+                </div>
+                <p id="noChartsMessage" style="display: none;">No specific data for visualization identified.</p>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div id="chatContainer" class="chat-container" style="display: none;">
+             <h2>Chat about this Report</h2>
+             <div id="chatMessages" class="chat-messages">
+                 <!-- Chat messages will appear here -->
+             </div>
+             <div id="typingIndicator" class="typing-indicator" style="display: none;">
+                 AI is typing... <span class="dot-flashing"></span>
+             </div>
+             <div class="chat-input-area">
+                 <input type="text" id="chatInput" placeholder="Ask a question about the report...">
+                 <button id="sendChatBtn">Send</button>
+             </div>
+        </div>
+
+
+        <div id="errorMessage" class="error-message" style="display: none;"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
