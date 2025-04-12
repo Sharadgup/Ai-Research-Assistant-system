@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Use dynamic title block -->
+    <title>{% block title %}AI Assistant{% endblock %}</title>
+    <!-- Link main CSS file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Block for extra head elements (like page-specific CSS or JS libraries) -->
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <header class="main-header">
+        <div class="logo">🤖 AI Assistant</div>
+        <nav class="main-nav">
+            {% if session.user_id %}
+                {# Navigation for logged-in users #}
+                <span class="welcome-user">Welcome, {{ session.username }}!</span>
+                <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+                {# Navigation for logged-out users #}
+                <a href="{{ url_for('login') }}">Login</a>
+                <a href="{{ url_for('register') }}">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+
+    <main class="main-container">
+        {# Display Flask flash messages #}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages-container">
+                {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {# Main content area for child templates #}
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer class="main-footer">
+        <!-- Use server-side datetime if passed, otherwise just year -->
+        <p>© {% if now %}{{ now.year }}{% else %}2024{% endif %} Your Company Name. All rights reserved.</p>
+    </footer>
+
+    {# --- Global JS Libraries (Load before page-specific scripts if needed) --- #}
+    {# Example: <script src="..."></script> #}
+
+    {# --- Block for page-specific JavaScript files --- #}
+    {% block scripts %}{% endblock %}
+</body>
+</html>

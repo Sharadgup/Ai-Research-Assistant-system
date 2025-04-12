@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Register - AI Assistant{% endblock %}
+
+{% block content %}
+<div class="auth-form-container">
+    <form class="auth-form" method="POST" action="{{ url_for('register') }}">
+        <h2>Create Your Account ✨</h2>
+        <div class="form-group">
+            <label for="username">Username:</label>
+            <input type="text" id="username" name="username" value="{{ username or '' }}" required minlength="3" placeholder="Choose a unique username">
+        </div>
+        <div class="form-group">
+            <label for="password">Password:</label>
+            <input type="password" id="password" name="password" required minlength="6" placeholder="Minimum 6 characters">
+        </div>
+        <div class="form-group">
+            <label for="confirm_password">Confirm Password:</label>
+            <input type="password" id="confirm_password" name="confirm_password" required minlength="6" placeholder="Re-enter your password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Register</button>
+        <p class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Login here</a>.</p>
+    </form>
+</div>
+{% endblock %}
