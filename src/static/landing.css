@@ -1,0 +1,221 @@
+/* ==========================
+   Landing Page Specific Styles
+   ========================== */
+
+/* --- Landing Header --- */
+.landing-header {
+    background-color: #fff; /* White header */
+    color: #343a40; /* Dark text */
+    padding: 0.8rem 2rem; /* Adjust padding */
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid #e9ecef;
+}
+
+.landing-header .logo {
+    color: #0056b3; /* Use primary blue for logo text */
+}
+
+.landing-nav a {
+    color: #495057; /* Dark grey nav links */
+    font-weight: 500;
+}
+.landing-nav a:hover {
+    color: #0056b3;
+}
+/* Outline button style */
+.btn-outline {
+    background-color: transparent;
+    border-color: #ced4da; /* Light grey border */
+    color: #495057; /* Dark grey text */
+}
+.btn-outline:hover {
+    background-color: #f1f3f5; /* Very light grey background on hover */
+    border-color: #adb5bd;
+    color: #0056b3;
+}
+
+
+/* --- Hero Section --- */
+.landing-hero {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); /* Blue gradient */
+    color: white;
+    text-align: center;
+    padding: 5rem 1rem; /* Generous padding */
+    margin-top: -1.5rem; /* Adjust to overlap slightly if desired, depending on header height */
+    clip-path: polygon(0 0, 100% 0, 100% 90%, 0 100%); /* Angled bottom shape */
+    margin-bottom: 2rem; /* Space below hero */
+}
+
+.hero-content {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.landing-hero h1 {
+    font-size: 2.8rem; /* Larger hero title */
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: white; /* Ensure heading is white */
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.landing-hero .subtitle {
+    font-size: 1.2rem;
+    margin-bottom: 2rem;
+    color: #e9ecef; /* Lighter subtitle text */
+    opacity: 0.9;
+}
+
+.btn-hero {
+    padding: 0.9rem 2.5rem; /* Larger button */
+    font-size: 1.2rem;
+    font-weight: bold;
+    background-color: #ffc107; /* Yellow accent color */
+    border-color: #ffc107;
+    color: #343a40; /* Dark text on yellow */
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+.btn-hero:hover {
+    background-color: #e0a800;
+    border-color: #d39e00;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
+}
+
+.hero-subtext {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    color: #ced4da;
+}
+
+/* --- General Landing Section Styling --- */
+.landing-section {
+    padding: 3rem 1rem;
+    max-width: 1100px; /* Limit content width */
+    margin: 2rem auto;
+}
+
+.landing-section h2 {
+    text-align: center;
+    font-size: 2rem;
+    color: #0056b3;
+    margin-bottom: 2.5rem;
+    position: relative;
+    padding-bottom: 0.5rem;
+}
+/* Underline effect for section titles */
+.landing-section h2::after {
+    content: '';
+    display: block;
+    width: 60px;
+    height: 3px;
+    background-color: #007bff;
+    margin: 0.5rem auto 0;
+}
+
+
+/* --- Features Section --- */
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Responsive grid */
+    gap: 2rem;
+}
+
+.feature-item {
+    background-color: #fff;
+    padding: 2rem;
+    text-align: center;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.07);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.feature-item:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+
+.feature-icon {
+    font-size: 2.5rem; /* Larger icons */
+    margin-bottom: 1rem;
+    line-height: 1; /* Prevent extra space */
+}
+
+.feature-item h3 {
+    font-size: 1.3rem;
+    color: #0056b3;
+    margin-bottom: 0.75rem;
+}
+
+.feature-item p {
+    font-size: 0.95rem;
+    color: #495057;
+}
+
+
+/* --- Tech Section --- */
+.tech-section {
+    background-color: #e9ecef; /* Light grey background */
+    border-radius: 8px;
+    padding: 3rem;
+}
+
+.tech-section ul {
+    list-style: none;
+    padding: 0;
+}
+.tech-section li {
+    margin-bottom: 0.8rem;
+    font-size: 1.05rem;
+}
+.tech-section li strong {
+    color: #0056b3;
+}
+
+/* --- Call to Action Section --- */
+.cta-section {
+    text-align: center;
+    background-color: #0056b3; /* Match header */
+    color: white;
+    padding: 3rem 1rem;
+    border-radius: 8px;
+}
+.cta-section h2 {
+    color: white;
+    margin-bottom: 1rem;
+}
+.cta-section h2::after {
+    background-color: #ffc107; /* Accent underline */
+}
+.cta-section p {
+    color: #e9ecef;
+    margin-bottom: 1.5rem;
+}
+.cta-section .btn-secondary { /* Style the secondary button */
+    background-color: #fff;
+    color: #0056b3;
+    border-color: #fff;
+}
+.cta-section .btn-secondary:hover {
+    background-color: #f8f9fa;
+    color: #004085;
+}
+
+
+/* --- Responsiveness --- */
+@media (max-width: 768px) {
+    .landing-hero h1 { font-size: 2.2rem; }
+    .landing-hero .subtitle { font-size: 1.1rem; }
+    .landing-section { padding: 2rem 1rem; }
+    .landing-section h2 { font-size: 1.8rem; }
+    .features-grid { grid-template-columns: 1fr; /* Stack features on smaller screens */ }
+    .main-header { flex-direction: column; gap: 0.5rem; }
+    .landing-nav { margin-top: 0.5rem; }
+}
+
+@media (max-width: 576px) {
+    .landing-hero { padding: 3rem 1rem; clip-path: none; /* Remove angled bottom on small screens */ }
+    .landing-hero h1 { font-size: 1.8rem; }
+    .landing-hero .subtitle { font-size: 1rem; }
+    .btn-hero { padding: 0.7rem 1.8rem; font-size: 1rem; }
+    .auth-form { padding: 1.5rem; }
+}

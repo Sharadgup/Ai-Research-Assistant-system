@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to AI Research Assistant</title>
+    <!-- Link the main CSS file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}">
+    <!-- Optional: Link Google Fonts or other assets -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="landing-header">
+        <div class="logo">🤖 AI Research Assistant</div>
+        <nav class="landing-nav">
+            {# Maybe link to specific sections later if needed #}
+            {# <a href="#features">Features</a>
+            <a href="#about">About</a> #}
+            <a href="{{ url_for('login') }}" class="btn btn-outline">Login</a> {# Simple login button #}
+        </nav>
+    </header>
+
+    <main>
+        {# --- Hero Section --- #}
+        <section class="landing-hero">
+            <div class="hero-content">
+                <h1>Unlock Insights with AI-Powered Analysis</h1>
+                <p class="subtitle">Transform your text into structured reports, visualize data, and chat with an AI assistant tailored to your content.</p>
+                <button id="trySystemBtn" class="btn btn-primary btn-hero">🚀 Try the System</button>
+                <p class="hero-subtext">Login or Register to get started.</p>
+            </div>
+        </section>
+
+        {# --- Features Section --- #}
+        <section id="features" class="landing-section features-section">
+            <h2>Core Features</h2>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-icon">📄</div>
+                    <h3>Intelligent Reporting</h3>
+                    <p>Generate summaries, key findings, detailed analyses, sentiment scores, and keywords from your text data using advanced AI.</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">📊</div>
+                    <h3>Data Visualization</h3>
+                    <p>Automatically create insightful charts visualizing keyword frequencies and sentiment distribution from the generated reports.</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">💬</div>
+                    <h3>Contextual Chat</h3>
+                    <p>Engage in interactive conversations with the AI specifically about the content of your generated reports.</p>
+                </div>
+                 <div class="feature-item">
+                    <div class="feature-icon">💾</div>
+                    <h3>Persistent Storage</h3>
+                    <p>Your inputs, generated reports, and chat histories are securely saved in our database for your reference.</p>
+                </div>
+            </div>
+        </section>
+
+        {# --- Technology/API Section --- #}
+        <section id="tech" class="landing-section tech-section">
+            <h2>Powered By Cutting-Edge Technology</h2>
+            <p>We leverage powerful APIs and robust technologies to deliver intelligent insights:</p>
+            <ul>
+                <li>✅ **Google Gemini API:** For state-of-the-art text analysis and generation.</li>
+                <li>✅ **MongoDB:** Provides flexible and scalable database storage.</li>
+                <li>✅ **Flask & Socket.IO:** Ensures a responsive and real-time web experience.</li>
+            </ul>
+            <p>Our platform connects these technologies to provide a seamless workflow for your research and analysis needs.</p>
+        </section>
+
+         {# --- Call to Action (Optional Repeat) --- #}
+         <section class="landing-section cta-section">
+             <h2>Ready to Get Started?</h2>
+             <p>Sign up or log in to begin transforming your text data into actionable intelligence.</p>
+              <button id="trySystemBtnBottom" class="btn btn-secondary">Login / Register</button> {# Secondary button #}
+         </section>
+
+    </main>
+
+    <footer class="main-footer">
+        <p>© {{ now.year }} Your Company Name. All rights reserved.</p> {# Access year attribute #}
+    </footer>
+
+    {# --- Inline JavaScript for Button Redirect --- #}
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const tryButton = document.getElementById('trySystemBtn');
+            const tryButtonBottom = document.getElementById('trySystemBtnBottom'); // Get second button
+            const loginUrl = "{{ url_for('login') }}"; // Get URL from Flask
+
+            if (tryButton) {
+                tryButton.addEventListener('click', () => {
+                    console.log("Try System button clicked, redirecting to:", loginUrl);
+                    window.location.href = loginUrl;
+                });
+            } else {
+                console.error("Hero button 'trySystemBtn' not found!");
+            }
+
+             if (tryButtonBottom) { // Add listener for bottom button too
+                tryButtonBottom.addEventListener('click', () => {
+                    console.log("Bottom Try System button clicked, redirecting to:", loginUrl);
+                    window.location.href = loginUrl;
+                });
+            }
+
+        });
+    </script>
+</body>
+</html>

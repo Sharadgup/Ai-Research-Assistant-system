@@ -12,7 +12,7 @@ from flask_socketio import SocketIO, emit, send # Keep send if used by client, e
 from dotenv import load_dotenv
 import logging
 import json
-from threading import Lock # Still potentially useful for complex DB ops
+from threading import Lock # May not be needed with DB approach but keep for now
 import traceback
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ConfigurationError, DuplicateKeyError
@@ -52,7 +52,7 @@ else:
     try:
         mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         logging.info("Attempting to connect to MongoDB...")
-        mongo_client.admin.command('ismaster')
+        mongo_client.admin.command('ismaster') # Test connection
         db = mongo_client[DB_NAME]
         logging.info(f"Connected to MongoDB server. Selecting database: '{DB_NAME}'")
 
@@ -61,21 +61,16 @@ else:
         documentation_collection = db["documentation"]
         chats_collection = db["chats"]
         registrations_collection = db["registrations"]
-        general_chats_collection = db["general_chats"] # <-- Define general chat collection
+        general_chats_collection = db["general_chats"] # <-- Define general chat collection object
 
         logging.info("MongoDB Collections assigned.")
 
         # Create unique index for username
-        try:
-             registrations_collection.create_index("username", unique=True)
-             logging.info("Ensured unique index on 'username' in 'registrations'.")
-        except Exception as index_err: logging.warning(f"Could not ensure unique username index: {index_err}")
-
-        # Create index for general chats (unique per user)
-        try:
-             general_chats_collection.create_index("user_id", unique=True)
-             logging.info("Ensured unique index on 'user_id' in 'general_chats'.")
-        except Exception as index_err: logging.warning(f"Could not ensure unique user_id index for general_chats: {index_err}")
+        try: registrations_collection.create_index("username", unique=True); logging.info("Ensured unique index on 'username'.")
+        except Exception as index_err: logging.warning(f"Username index warn: {index_err}")
+        # Create index for general chats
+        try: general_chats_collection.create_index("user_id", unique=True); logging.info("Ensured unique index on 'user_id'.")
+        except Exception as index_err: logging.warning(f"General chat index warn: {index_err}")
 
         logging.info(f"Successfully configured MongoDB. Database: '{DB_NAME}'")
     except (ConnectionFailure, ConfigurationError) as ce: logging.critical(f"MongoDB connection/config failed: {ce}"); db = None
@@ -86,99 +81,83 @@ else:
 # --- SocketIO Initialization ---
 allowed_origins_list = [
     "http://127.0.0.1:5000", "http://localhost:5000",
-    "https://5000-idx-ai-note-system-1744087101492.cluster-a3grjzek65cxex762e4mwrzl46.cloudworkstations.dev",
-    # "*" # Use wildcard only if necessary for testing
+    "https://5000-idx-ai-note-system-1744087101492.cluster-a3grjzek65cxex762e4mwrzl46.cloudworkstations.dev", "*"
 ]
 socketio = SocketIO( app, async_mode='eventlet', cors_allowed_origins=allowed_origins_list,
                    ping_timeout=20, ping_interval=10 )
 
 # --- Gemini API Configuration ---
-# (Keep your Gemini initialization)
-api_key = os.getenv("GEMINI_API_KEY")
-model_name = "gemini-1.5-flash"
-model = None
+api_key = os.getenv("GEMINI_API_KEY"); model_name = "gemini-1.5-flash"; model = None
 if api_key:
     try:
         genai.configure(api_key=api_key)
-        safety_settings = [ {"category": c, "threshold": "BLOCK_MEDIUM_AND_ABOVE"} for c in ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"] ]
-        model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
-        logging.info(f"Gemini model '{model_name}' initialized.")
-    except Exception as e: logging.error(f"Error initializing Gemini model: {e}")
-else: logging.warning("GEMINI_API_KEY not found.")
+        safety_settings=[{"category":c,"threshold":"BLOCK_MEDIUM_AND_ABOVE"}for c in ["HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH","HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]
+        model=genai.GenerativeModel(model_name,safety_settings=safety_settings);logging.info(f"Gemini model '{model_name}' init.")
+    except Exception as e:logging.error(f"Error init Gemini: {e}")
+else:logging.warning("GEMINI_API_KEY not found.")
 
 # --- Authentication Helper ---
 def is_logged_in(): return 'user_id' in session
 
 # --- HTTP Routes ---
-# (Keep routes: /, /register, /login, /logout, /dashboard, /index, /generate_report)
-# Make sure generate_report saves user_id if logged in
 @app.route('/')
-def home_or_login():
-    if is_logged_in(): return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
+def landing_page():
+    return render_template('landing.html', now=datetime.utcnow())
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    # (Keep existing registration logic)
     if is_logged_in(): return redirect(url_for('dashboard'))
     if request.method == 'POST':
-        if db is None or registrations_collection is None: flash("DB error.", "danger"); return render_template('register.html')
-        username = request.form.get('username','').strip(); password = request.form.get('password',''); confirm_password = request.form.get('confirm_password','')
-        error = None
-        if not username: error = "Username required."
-        elif not password: error = "Password required."
-        elif password != confirm_password: error = "Passwords don't match."
-        elif len(password) < 6: error = "Password min 6 chars."
-        if error: flash(error, "warning"); return render_template('register.html', username=username)
-        password_hash = generate_password_hash(password)
-        try:
-            user_doc = {"username": username, "password_hash": password_hash, "created_at": datetime.utcnow()}
-            registrations_collection.insert_one(user_doc); flash("Registration successful!", "success"); return redirect(url_for('login'))
-        except DuplicateKeyError: flash("Username exists.", "danger"); return render_template('register.html', username=username)
-        except Exception as e: logging.error(f"Reg error: {e}"); flash("Registration error.", "danger"); return render_template('register.html', username=username)
-    return render_template('register.html')
+        if db is None: flash("DB error.", "danger"); return render_template('register.html', now=datetime.utcnow())
+        username=request.form.get('username','').strip(); password=request.form.get('password',''); confirm=request.form.get('confirm_password','')
+        error=None;
+        if not username: error="Username required."
+        elif not password: error="Password required."
+        elif password!=confirm: error="Passwords don't match."
+        elif len(password)<6: error="Password min 6 chars."
+        if error: flash(error, "warning"); return render_template('register.html', username=username, now=datetime.utcnow())
+        hash_val=generate_password_hash(password)
+        try: registrations_collection.insert_one({"username": username, "password_hash": hash_val, "created_at": datetime.utcnow()}); flash("Registered!", "success"); return redirect(url_for('login'))
+        except DuplicateKeyError: flash("Username exists.", "danger"); return render_template('register.html', username=username, now=datetime.utcnow())
+        except Exception as e: logging.error(f"Reg error: {e}"); flash("Registration error.", "danger"); return render_template('register.html', username=username, now=datetime.utcnow())
+    return render_template('register.html', now=datetime.utcnow())
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-     # (Keep existing login logic)
     if is_logged_in(): return redirect(url_for('dashboard'))
     if request.method == 'POST':
-        if db is None or registrations_collection is None: flash("DB error.", "danger"); return render_template('login.html')
-        username = request.form.get('username','').strip(); password = request.form.get('password','')
-        if not username or not password: flash("All fields required.", "warning"); return render_template('login.html', username=username)
+        if db is None: flash("DB error.", "danger"); return render_template('login.html', now=datetime.utcnow())
+        username=request.form.get('username','').strip(); password=request.form.get('password','')
+        if not username or not password: flash("All fields required.", "warning"); return render_template('login.html', username=username, now=datetime.utcnow())
         try:
-            user_doc = registrations_collection.find_one({"username": username})
-            if user_doc and check_password_hash(user_doc.get('password_hash', ''), password):
-                session.clear(); session['user_id'] = str(user_doc['_id']); session['username'] = user_doc['username']; return redirect(url_for('dashboard'))
-            else: flash("Invalid credentials.", "danger"); return render_template('login.html', username=username)
-        except Exception as e: logging.error(f"Login error: {e}"); flash("Login error.", "danger"); return render_template('login.html', username=username)
-    return render_template('login.html')
+            user=registrations_collection.find_one({"username": username})
+            if user and check_password_hash(user.get('password_hash', ''), password):
+                session.clear(); session['user_id'] = str(user['_id']); session['username'] = user['username']; return redirect(url_for('dashboard'))
+            else: flash("Invalid credentials.", "danger"); return render_template('login.html', username=username, now=datetime.utcnow())
+        except Exception as e: logging.error(f"Login error: {e}"); flash("Login error.", "danger"); return render_template('login.html', username=username, now=datetime.utcnow())
+    return render_template('login.html', now=datetime.utcnow())
 
 @app.route('/logout')
 def logout():
-    # (Keep existing logout logic)
-    username = session.get('username', 'Unknown user'); session.clear(); flash("Logged out.", "success"); logging.info(f"User '{username}' logged out."); return redirect(url_for('login'))
+    username = session.get('username', 'Unknown'); session.clear(); flash("Logged out.", "success"); logging.info(f"User '{username}' logged out."); return redirect(url_for('login'))
 
 @app.route('/dashboard')
 def dashboard():
-    # (Keep existing dashboard logic)
     if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
-    username = session.get('username', 'User')
-    # Prepare Dashboard Data
-    available_models = ["Gemini 1.5 Flash", "Gemini Pro"]; usable_models = ["Gemini 1.5 Flash"]
-    sectors = ["Healthcare", "Finance", "Technology", "Education", "Retail", "General"]
-    apps = [{"id": "tts", "name": "Text-to-Speech", "description": "..."}, {"id": "ttv", "name": "Text-to-Video", "description": "..."}]
-    services = ["Report Analysis", "Visualization", "Chat", "PDF Export"]
-    dashboard_data = { "username": username, "services": services, "available_models": available_models, "usable_models": usable_models, "sectors": sectors, "apps": apps }
+    username=session.get('username','User')
+    available_models=["Gemini 1.5 Flash", "Gemini Pro"]; usable_models=["Gemini 1.5 Flash"]
+    sectors=["Healthcare", "Finance", "Technology", "Education", "Retail", "General"]
+    apps=[{"id":"tts","name":"Text-to-Speech","description":"..."},{"id":"ttv","name":"Text-to-Video","description":"..."}]
+    services=["Report Analysis", "Visualization", "Chat", "PDF Export"]
+    dashboard_data={"username": username, "services": services, "available_models": available_models, "usable_models": usable_models, "sectors": sectors, "apps": apps}
     return render_template('dashboard.html', data=dashboard_data, now=datetime.utcnow())
 
 @app.route('/index')
 def report_page():
-    return render_template('index.html')
+    return render_template('index.html', now=datetime.utcnow())
 
 @app.route('/generate_report', methods=['POST'])
 def generate_report_route():
-    # (Keep existing generate_report logic - saves prompts/docs linked to user_id)
     logging.info("Received request for /generate_report")
     if not model: return jsonify({"error": "AI unavailable."}), 503
     if db is None: return jsonify({"error": "DB unavailable."}), 503
@@ -196,8 +175,7 @@ def generate_report_route():
         prompt_doc_id = input_prompts_collection.insert_one(prompt_doc).inserted_id
     except Exception as db_err: logging.error(f"Failed save input prompt: {db_err}")
 
-    # Define Gemini Prompt
-    prompt = f"""Analyze...\nInput Text:\n---\n{input_text}\n---\nGenerate report...\n(Your full prompt here)\nReport:\n---"""
+    prompt = f"""Analyze...\nInput Text:\n---\n{input_text}\n---\nGenerate report...\n(Your full prompt here)\nReport:\n---""" # Keep your prompt
 
     generated_text = ""; response = None
     try: # Call Gemini
@@ -205,7 +183,6 @@ def generate_report_route():
         if not response.candidates: raise ValueError("AI response empty/blocked.")
         generated_text = response.text
         logging.info(f"/generate_report: Gemini success.")
-        logging.debug(f"/generate_report: RAW RESPONSE:\n{generated_text}")
         # Parse JSON data
         report_content = generated_text; chart_data_json = {}
         try: # Parse JSON
@@ -245,7 +222,7 @@ def handle_connect(): logging.info(f"(Report Chat) Client connected: {request.si
 def handle_disconnect(): logging.info(f"(Report Chat) Client disconnected: {request.sid}")
 @socketio.on('send_message')
 def handle_send_message(data):
-    # (Keep existing logic for report chat - detailed logging included)
+    # (Keep existing detailed logic)
     sid = request.sid; logging.info(f"--- handle_send_message START (SID: {sid}) ---")
     if db is None: emit('error', {'message': 'DB unavailable.'}, room=sid); logging.info(f"--- END (SID: {sid}) ---"); return
     logging.debug(f"(SID: {sid}) Received data: {data}")
@@ -256,50 +233,39 @@ def handle_send_message(data):
     try: doc_id=ObjectId(doc_id_str)
     except Exception as e: logging.error(f"(SID: {sid}) Invalid doc_id format: {doc_id_str}. Error: {e}"); emit('error', {'message': 'Invalid ID.'}, room=sid); logging.info(f"--- END (SID: {sid}) ---"); return
     logging.info(f"(SID: {sid}) Processing msg for doc {doc_id}")
-    # 1. Save User Msg
-    try: chats_collection.update_one({"documentation_id": doc_id}, {"$push": {"messages": {"role": "user", "text": user_message, "timestamp": datetime.utcnow()}}}, upsert=True); logging.info(f"(SID: {sid}) Saved user msg for doc {doc_id}")
+    try: chats_collection.update_one({"documentation_id": doc_id}, {"$push": {"messages": {"role": "user", "text": user_message, "timestamp": datetime.utcnow()}}}, upsert=True); logging.info(f"(SID: {sid}) Saved user msg")
     except Exception as e: logging.error(f"(SID: {sid}) Failed save user msg: {e}")
-    # 2. Get AI Response
-    ai_response = "[Error: AI processing failed]"
+    ai_response = "[AI Error]";
     try:
         emit('typing_indicator', {'isTyping': True}, room=sid)
-        logging.info(f"(SID: {sid}) Querying Gemini for doc {doc_id}...")
         history = []; chat_doc = chats_collection.find_one({"documentation_id": doc_id})
         if chat_doc and "messages" in chat_doc: # Rebuild history
              for msg in chat_doc["messages"]: history.append({'role': ('model' if msg['role']=='AI' else msg['role']), 'parts': [msg['text']]})
-             logging.info(f"(SID: {sid}) Rebuilt history with {len(history)} messages.")
-        else: # Add initial context if needed
+        else: # Add initial context
             doc_data = documentation_collection.find_one({"_id": doc_id})
             if doc_data and "report_html" in doc_data: history.extend([{'role': 'user', 'parts': [f"Report:\n{doc_data['report_html'][:3000]}"]}, {'role': 'model', 'parts': ["OK."]}])
-        logging.debug(f"(SID: {sid}) History to Gemini: {history[:2]}...{history[-2:]}")
         if model: # Call Gemini
             temp_chat = model.start_chat(history=history); response = temp_chat.send_message(user_message)
-            logging.info(f"(SID: {sid}) Got Gemini response.")
             if response.candidates: ai_response = response.text
-            else: logging.error("Gemini gave no candidates"); ai_response = "[Error: No AI response]"
-        else: logging.error("Gemini model not available"); ai_response = "[Error: AI model unavailable]"
-        # 3. Save AI Msg
-        if not ai_response.startswith("[Error:"):
-            try: chats_collection.update_one({"documentation_id": doc_id}, {"$push": {"messages": {"role": "AI", "text": ai_response, "timestamp": datetime.utcnow()}}}); logging.info(f"(SID: {sid}) Saved AI response.")
+            else: logging.error("Gemini no candidates")
+        else: logging.error("Gemini model unavailable")
+        if not ai_response.startswith("[AI Error"): # Save AI Msg
+            try: chats_collection.update_one({"documentation_id": doc_id}, {"$push": {"messages": {"role": "AI", "text": ai_response, "timestamp": datetime.utcnow()}}}); logging.info(f"(SID: {sid}) Saved AI response")
             except Exception as e: logging.error(f"Failed save AI msg: {e}")
-        # 4. Emit to client
-        logging.info(f"(SID: {sid}) Emitting 'receive_message'")
-        emit('receive_message', {'user': 'AI', 'text': ai_response}, room=sid)
-    except Exception as e: logging.error(f"Error in report chat processing: {e}"); logging.error(traceback.format_exc()); emit('error', {'message': 'Server error during chat.'}, room=sid)
+        emit('receive_message', {'user': 'AI', 'text': ai_response}, room=sid) # Emit to client
+    except Exception as e: logging.error(f"Error in report chat: {e}"); emit('error', {'message': 'Server error.'}, room=sid)
     finally: emit('typing_indicator', {'isTyping': False}, room=sid); logging.info(f"--- handle_send_message END (SID: {sid}) ---")
-
 
 # == Dashboard Namespace (/dashboard_chat) ==
 @socketio.on('connect', namespace='/dashboard_chat')
 def handle_dashboard_connect():
     if not is_logged_in(): logging.warning(f"Unauth connect /dashboard_chat: {request.sid}"); return False
-    logging.info(f"User '{session.get('username')}' connected to dashboard chat: {request.sid}")
-
+    logging.info(f"User '{session.get('username')}' connected dashboard chat: {request.sid}")
 @socketio.on('disconnect', namespace='/dashboard_chat')
 def handle_dashboard_disconnect():
-    logging.info(f"User '{session.get('username', 'Unknown')}' disconnected from dashboard chat: {request.sid}")
+    logging.info(f"User '{session.get('username', 'Unknown')}' disconnected dashboard chat: {request.sid}")
 
-# --- CORRECTED Dashboard Chat Handler with DB saving ---
+# --- CORRECTED Dashboard Chat Handler with DB saving & Checks ---
 @socketio.on('send_dashboard_message', namespace='/dashboard_chat')
 def handle_dashboard_chat(data):
     """Handles general chat messages, saves to DB, gets AI response."""
@@ -314,141 +280,94 @@ def handle_dashboard_chat(data):
          return
 
     # 2. Database/Collection Availability Check
-    # *** Check specific collection general_chats_collection ***
+    # *** Use 'is None' for the collection check ***
     if db is None or general_chats_collection is None:
          logging.error(f"(Dashboard Chat SID: {sid}) DB or general_chats_collection is None. DB: {db is not None}, Collection: {general_chats_collection is not None}")
          emit('error', {'message': 'Chat history database service unavailable.'}, room=sid, namespace='/dashboard_chat')
          logging.debug(f"--- handle_dashboard_chat END (SID: {sid}) ---")
          return
+    # ********************************************
 
     # 3. User Info & Input Validation
-    username = session.get('username')
-    user_id_str = session.get('user_id')
+    username = session.get('username'); user_id_str = session.get('user_id')
     if not username or not user_id_str:
         logging.error(f"(Dashboard Chat SID: {sid}) Missing username or user_id in session.")
         emit('error', {'message': 'Session error. Please log in again.'}, room=sid, namespace='/dashboard_chat')
         logging.debug(f"--- handle_dashboard_chat END (SID: {sid}) ---")
         return
-    try:
-        user_id_object = ObjectId(user_id_str) # Convert session user_id string to ObjectId
+    try: user_id_object = ObjectId(user_id_str)
     except Exception as e:
-         logging.error(f"(Dashboard Chat SID: {sid}) Invalid user_id format in session ('{user_id_str}') for {username}: {e}")
+         logging.error(f"(Dashboard Chat SID: {sid}) Invalid session user_id ('{user_id_str}') for {username}: {e}")
          emit('error', {'message': 'Internal session error.'}, room=sid, namespace='/dashboard_chat')
          logging.debug(f"--- handle_dashboard_chat END (SID: {sid}) ---")
          return
-
     if not isinstance(data, dict): logging.warning(f"Non-dict chat data from {username}"); return
-    user_message = data.get('text', '').strip()
-    if not user_message: logging.debug(f"Empty message from {username}"); return
-
-    logging.info(f"Dashboard Chat from {username} ({user_id_str}, SID: {sid}): '{user_message[:50]}...'")
+    user_message = data.get('text', '').strip();
+    if not user_message: logging.debug(f"Empty msg from {username}"); return
+    logging.info(f"Dashboard Chat from {username}: '{user_message[:50]}...'")
 
     # --- 4. Save User Message ---
     try:
         user_message_doc = {"role": "user", "text": user_message, "timestamp": datetime.utcnow()}
-        update_result = general_chats_collection.update_one(
-            {"user_id": user_id_object}, # Find doc for this user
-            {"$push": {"messages": user_message_doc},
-             "$setOnInsert": { "user_id": user_id_object, "username": username, "start_timestamp": datetime.utcnow() }},
-            upsert=True # Create if doesn't exist
-        )
-        # Log DB result details
-        logging.info(f"(Dashboard Chat SID: {sid}) User message save result for user {user_id_str}: matched={update_result.matched_count}, modified={update_result.modified_count}, upserted_id={update_result.upserted_id}")
-        if not update_result.acknowledged: logging.warning(f"DB did not acknowledge user message save for {username}.")
-
-    except Exception as db_err:
-        logging.error(f"(Dashboard Chat SID: {sid}) Failed to save general chat user message for {username}: {db_err}")
-        logging.error(traceback.format_exc())
-        # Decide: Emit error? Proceed anyway? For now, we proceed but log heavily.
-        # emit('error', {'message': 'Failed to save message history.'}, room=sid, namespace='/dashboard_chat')
-
+        update_result = general_chats_collection.update_one({"user_id": user_id_object},{"$push": {"messages": user_message_doc},"$setOnInsert": {"user_id": user_id_object, "username": username, "start_timestamp": datetime.utcnow()}},upsert=True)
+        logging.info(f"(Dash Chat SID: {sid}) User msg save result: {update_result.raw_result}")
+    except Exception as db_err: logging.error(f"Failed save general chat user msg: {db_err}"); logging.error(traceback.format_exc())
 
     # --- 5. Get AI Response (with history) ---
     ai_response_text = "[Error: AI processing failed]"
     try:
-        emit('typing_indicator', {'isTyping': True}, room=sid, namespace='/dashboard_chat') # Use correct namespace
+        emit('typing_indicator', {'isTyping': True}, room=sid, namespace='/dashboard_chat')
         logging.info(f"(Dashboard Chat SID: {sid}) Querying Gemini for {username}...")
-
-        # Rebuild history
-        chat_history_from_db = []
-        logging.debug(f"(Dashboard Chat SID: {sid}) Fetching chat history for user {user_id_str}...")
-        chat_doc = general_chats_collection.find_one({"user_id": user_id_object}) # Find by user ID
+        chat_history_from_db = [] # Rebuild history
+        logging.debug(f"(Dashboard Chat SID: {sid}) Fetching history user {user_id_object}...")
+        chat_doc = general_chats_collection.find_one({"user_id": user_id_object})
         if chat_doc and "messages" in chat_doc:
-             # Limit history size if necessary (e.g., last 10 messages)
-             # recent_messages = chat_doc["messages"][-10:] # Example: Get last 10
-             recent_messages = chat_doc["messages"] # Or use full history for now
-             for msg in recent_messages:
-                 api_role = 'model' if msg['role'] == 'AI' else msg['role']
-                 chat_history_from_db.append({'role': api_role, 'parts': [msg['text']]})
-             logging.info(f"(Dashboard Chat SID: {sid}) Rebuilt general chat history with {len(chat_history_from_db)} messages for {username}.")
-        else:
-            logging.info(f"(Dashboard Chat SID: {sid}) No general chat history found in DB for {username}.")
+             recent_messages = chat_doc["messages"] # Or limit: [-10:]
+             for msg in recent_messages: chat_history_from_db.append({'role': ('model' if msg['role']=='AI' else msg['role']), 'parts': [msg['text']]})
+             logging.info(f"(Dashboard Chat SID: {sid}) Rebuilt history ({len(chat_history_from_db)} msgs).")
+        else: logging.info(f"(Dashboard Chat SID: {sid}) No history found.")
 
-        # Call Gemini
-        if model:
-            temp_chat = model.start_chat(history=chat_history_from_db)
-            response = temp_chat.send_message(user_message) # Send current message
-            logging.info(f"(Dashboard Chat SID: {sid}) Received Gemini response for {username}.")
-            # Validate Gemini response...
-            if response and hasattr(response, 'candidates') and response.candidates:
-                ai_response_text = response.text if hasattr(response, 'text') else "[AI response format error]"
-                logging.debug(f"(Dashboard Chat SID: {sid}) Gemini response text: {ai_response_text[:100]}...")
-            else:
-                 ai_response_text = "[Error: AI response empty/blocked]"
-                 logging.error(f"(Dashboard Chat SID: {sid}) AI response invalid/blocked. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
-        else:
-             ai_response_text = "[Error: AI model not available]"
-             logging.error(f"(Dashboard Chat SID: {sid}) AI Model is None.")
-
+        if model: # Call Gemini
+            temp_chat = model.start_chat(history=chat_history_from_db); response = temp_chat.send_message(user_message)
+            logging.info(f"(Dashboard Chat SID: {sid}) Got Gemini response.")
+            if response and response.candidates: ai_response_text = response.text
+            else: ai_response_text = "[Error: AI response empty/blocked]"; logging.error(f"AI response invalid. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
+        else: ai_response_text = "[Error: AI model unavailable]"; logging.error(f"(SID: {sid}) AI Model is None.")
 
         # --- 6. Save AI Message ---
-        # Check specifically if general_chats_collection is available before saving
+        # *** CORRECTED COLLECTION CHECK: Using 'is not None' ***
         if not ai_response_text.startswith("[Error:") and general_chats_collection is not None:
+        # ********************************************************
             try:
                 ai_message_doc = {"role": "AI", "text": ai_response_text, "timestamp": datetime.utcnow()}
-                # Update the specific user's chat document
-                update_result_ai = general_chats_collection.update_one(
-                    {"user_id": user_id_object}, # Filter by user ID
-                    {"$push": {"messages": ai_message_doc}} # Add message to array
-                    # No upsert needed here, doc MUST exist from user message save
-                )
-                # Log AI save result
-                logging.info(f"(Dashboard Chat SID: {sid}) AI message save result for user {user_id_str}: matched={update_result_ai.matched_count}, modified={update_result_ai.modified_count}")
-                if not update_result_ai.acknowledged or update_result_ai.matched_count == 0:
-                     logging.warning(f"DB did not acknowledge AI message save or match user doc for {username}.")
-
-            except Exception as db_err:
-                logging.error(f"(Dashboard Chat SID: {sid}) Failed to save general chat AI response for {username}: {db_err}")
-                logging.error(traceback.format_exc())
-        elif general_chats_collection is None:
-             logging.error(f"(Dashboard Chat SID: {sid}) Cannot save AI response, general_chats_collection is None!")
-        else: # AI response started with [Error:
-             logging.warning(f"(Dashboard Chat SID: {sid}) Skipping DB save for AI error response for {username}: '{ai_response_text}'")
+                update_result_ai = general_chats_collection.update_one({"user_id": user_id_object},{"$push": {"messages": ai_message_doc}})
+                logging.info(f"(Dash Chat SID: {sid}) AI msg save result: {update_result_ai.raw_result}")
+                if not update_result_ai.acknowledged or update_result_ai.matched_count == 0: logging.warning(f"DB did not ack/match AI msg save for {username}.")
+            except Exception as db_err: logging.error(f"Failed save general AI response: {db_err}"); logging.error(traceback.format_exc())
+        elif general_chats_collection is None: logging.error(f"(Dash Chat SID: {sid}) Cannot save AI rsp, collection is None!")
+        else: logging.warning(f"(Dash Chat SID: {sid}) Skipping save for AI error: '{ai_response_text}'")
 
         # --- 7. Emit AI response back to client ---
         logging.info(f"(Dashboard Chat SID: {sid}) Emitting 'receive_dashboard_message' to {username}: '{ai_response_text[:50]}...'")
-        emit('receive_dashboard_message', {'user': 'AI', 'text': ai_response_text}, room=sid, namespace='/dashboard_chat') # Use correct event/namespace
+        emit('receive_dashboard_message', {'user': 'AI', 'text': ai_response_text}, room=sid, namespace='/dashboard_chat')
 
     except Exception as e:
-        logging.error(f"(Dashboard Chat SID: {sid}) Error processing dashboard message for {username}: {e}")
+        logging.error(f"(Dashboard Chat SID: {sid}) Error processing dashboard message: {e}")
         logging.error(traceback.format_exc())
-        # Emit generic error on the correct namespace
         emit('error', {'message': f'Server error during chat processing.'}, room=sid, namespace='/dashboard_chat')
     finally:
-        emit('typing_indicator', {'isTyping': False}, room=sid, namespace='/dashboard_chat') # Use correct namespace
+        emit('typing_indicator', {'isTyping': False}, room=sid, namespace='/dashboard_chat')
         logging.debug(f"--- handle_dashboard_chat END (SID: {sid}) ---")
-
 
 # --- Main Execution ---
 if __name__ == '__main__':
     if db is None: logging.critical("MongoDB connection failed. Aborting."); exit(1)
     if not app.config['SECRET_KEY'] or app.config['SECRET_KEY'] == 'dev-secret-key-only-not-for-production!': logging.warning("WARNING: Running with insecure default FLASK_SECRET_KEY!")
-
     logging.info("Starting Flask-SocketIO server...")
     try:
         socketio.run(app, debug=True, host='127.0.0.1', port=5000, use_reloader=False)
     except ValueError as ve:
-        if 'Invalid async_mode specified' in str(ve): logging.critical("ASYNC MODE ERROR: 'eventlet' required..."); logging.critical("Please install it: pip install eventlet")
+        if 'Invalid async_mode specified' in str(ve): logging.critical("ASYNC MODE ERROR: 'eventlet' required...")
         else: logging.error(f"Error starting server: {ve}"); logging.error(traceback.format_exc())
     except OSError as oe:
          if "Address already in use" in str(oe): logging.critical(f"PORT ERROR: Port 5000 is already in use...")

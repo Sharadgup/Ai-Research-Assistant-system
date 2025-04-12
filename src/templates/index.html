@@ -88,7 +88,7 @@
 {% block scripts %}
     <!-- Load the specific JS for THIS page (Report generation/chat) -->
     {# Load Firebase first if needed by script.js too #}
-    <script type="module" src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
 
     <!-- Load the specific JS for the DASHBOARD CHAT (if user is logged in) -->
     {% if session.user_id %}
