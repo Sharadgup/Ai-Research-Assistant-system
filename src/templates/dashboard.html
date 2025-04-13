@@ -1,12 +1,10 @@
-{% extends "base.html" %}
+{% extends "base.html" %} {# Assumes base.html exists #}
 
 {% block title %}Dashboard - {{ data.username }}{% endblock %}
 
 {% block head_extra %}
-    {# Add Socket.IO client library #}
+    {# Load Socket.IO client library - needed only for dashboard chat #}
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    {# Link dashboard-specific CSS if needed #}
-    {# <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"> #}
 {% endblock %}
 
 {% block content %}
@@ -14,21 +12,20 @@
     {# --- Left Sidebar --- #}
     <aside class="sidebar">
         <nav class="sidebar-nav">
-            {# AI Agents Section (Expandable) #}
-            <details class="sidebar-section" open> {# Starts open #}
+            {# AI Agents Section #}
+            <details class="sidebar-section" open>
                 <summary class="sidebar-section-title">🤖 AI Agents</summary>
                 <ul class="sidebar-submenu">
-                    <li><a href="#" data-content="education">Education Agent</a></li>
-                    <li><a href="#" data-content="healthcare">Healthcare Agent</a></li>
-                    <li><a href="#" data-content="construction">Construction Agent</a></li>
-                    <li><a href="#" data-content="law">Law Agent</a></li>
-                    <li><a href="#" data-content="rnd">Science & R&D Agent</a></li>
-                    <li><a href="#" data-content="other_agents">Other Agents</a></li>
-                    <li><a href="#" data-content="view_constructor">View Constructor</a></li> {# Specific request #}
+                    {# *** Link to the new Education Agent route *** #}
+                    <li><a href="{{ url_for('education_agent_page') }}">Education Agent</a></li>
+                    {# Other agent links would point to similar dedicated routes or handle content differently #}
+                    <li><a href="#" data-content="healthcare">Healthcare Agent (Panel)</a></li>
+                    <li><a href="#" data-content="construction">Construction Agent (Panel)</a></li>
+                    {# ... other agent links ... #}
                 </ul>
             </details>
 
-            {# Services Section (Expandable) #}
+            {# Services Section #}
             <details class="sidebar-section">
                 <summary class="sidebar-section-title">⚙️ Services</summary>
                 <ul class="sidebar-submenu">
@@ -38,7 +35,7 @@
                 </ul>
             </details>
 
-             {# Integrated Apps Section (Expandable) #}
+             {# Integrated Apps Section #}
             <details class="sidebar-section">
                 <summary class="sidebar-section-title">💡 Integrated Apps</summary>
                  <ul class="sidebar-submenu">
@@ -48,13 +45,13 @@
                 </ul>
             </details>
 
-            {# Account Section (Expandable) #}
+            {# Account Section #}
             <details class="sidebar-section">
                 <summary class="sidebar-section-title">👤 Account</summary>
                 <ul class="sidebar-submenu">
-                    <li><a href="#" data-content="change-password">Change Password</a></li> {# Link to functionality TBD #}
-                    <li><a href="#" data-content="view-profile">View Profile</a></li> {# Link to functionality TBD #}
-                    <li><a href="{{ url_for('logout') }}">Logout</a></li> {# Direct logout link #}
+                    <li><a href="#" data-content="change-password">Change Password</a></li>
+                    <li><a href="#" data-content="view-profile">View Profile</a></li>
+                    <li><a href="{{ url_for('logout') }}">Logout</a></li>
                 </ul>
             </details>
         </nav>
@@ -63,40 +60,40 @@
     {# --- Main Dashboard Content Area --- #}
     <section class="main-dashboard-content">
         <h2>Dashboard Overview 📊</h2>
-        <p>Welcome back, <strong>{{ data.username }}</strong>! Select an option from the sidebar to get started.</p>
+        <p>Welcome back, <strong>{{ data.username }}</strong>! Select an option from the sidebar.</p>
 
-        {# Area where content loaded by sidebar clicks will appear #}
+        {# Area for content panels loaded by sidebar clicks (excluding education agent) #}
         <div id="dashboard-dynamic-content" class="dynamic-content-area">
-            <p><i>Content for the selected sidebar item will load here.</i></p>
-             {# Example placeholder sections - these would be shown/hidden by JS #}
-             <div id="content-education" class="content-panel" style="display: none;"><h3>Education Agent</h3><p>Tools and features for educational analysis...</p></div>
-             <div id="content-healthcare" class="content-panel" style="display: none;"><h3>Healthcare Agent</h3><p>Tools and features for healthcare data...</p></div>
-             <div id="content-app-tts" class="content-panel" style="display: none;"><h3>Text-to-Speech App</h3><p>Controls for TTS...</p></div>
-             <div id="content-change-password" class="content-panel" style="display: none;"><h3>Change Password</h3><p>Form to change password will go here...</p></div>
-             {# Add placeholders for other data-content values #}
+            <p><i>Content for the selected sidebar item will load here (if not a separate page).</i></p>
+
+             {# Placeholders for panels shown by data-content links #}
+             <div id="content-healthcare" class="content-panel" style="display: none;"><h3>Healthcare Agent</h3><p>Panel Content...</p></div>
+             <div id="content-construction" class="content-panel" style="display: none;"><h3>Construction Agent</h3><p>Panel Content...</p></div>
+             {# ... other panels ... #}
+             <div id="content-change-password" class="content-panel" style="display: none;"><h3>Change Password</h3><p>Form...</p></div>
+             <div id="content-view-profile" class="content-panel" style="display: none;"><h3>View Profile</h3><p>Details...</p></div>
         </div>
 
         {# --- Dashboard General Chat Section --- #}
-        <section class="dashboard-section dashboard-chat-section" id="chat-section">
-            <h3>General Chat 💬</h3>
-            <div id="dashboardChatMessages" class="chat-messages">
-                <div class="message system">Connecting to chat...</div>
-            </div>
-            <div id="dashboardTypingIndicator" class="typing-indicator" style="display: none;">
-                <span></span><span></span><span></span> AI is thinking...
-            </div>
-            <div class="chat-input-area">
-                <input type="text" id="dashboardChatInput" placeholder="Ask a general question..." disabled>
-                <button id="sendDashboardChatBtn" class="btn btn-secondary" disabled>Send</button>
-            </div>
-             <div id="chatError" class="error-message" style="display: none;"></div>
+        {# (Keep the general chat section HTML as before) #}
+        <section class="dashboard-section dashboard-chat-section mt-4" id="chat-section">
+             <h3>General Chat 💬</h3>
+             <div id="dashboardChatMessages" class="chat-messages"></div>
+             <div id="dashboardTypingIndicator" class="typing-indicator" style="display: none;">AI is thinking...<span class="dot-flashing"></span></div>
+             <div class="chat-input-area">
+                 <input type="text" id="dashboardChatInput" placeholder="Ask a general question..." disabled>
+                 <button id="sendDashboardChatBtn" class="btn btn-secondary" disabled>Send</button>
+             </div>
+              <div id="chatError" class="error-message" style="display: none;"></div>
         </section>
+
     </section> {# End main-dashboard-content #}
 
 </div> {# End dashboard-layout #}
 {% endblock %}
 
 {% block scripts %}
-    {# Link the specific JavaScript for the dashboard page #}
+    {# Link the specific JavaScript for THIS dashboard page (sidebar toggles, general chat) #}
+    {# This script should NOT contain the Education Agent fetch logic anymore #}
     <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
 {% endblock %}
