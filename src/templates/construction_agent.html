@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Construction AI Assistant{% endblock %}
+
+{% block head_extra %}
+    {# Add specific CSS if needed later #}
+    {# <link rel="stylesheet" href="{{ url_for('static', filename=' consagent.css') }}"> #}
+{% endblock %}
+
+{% block content %}
+<div class="agent-container construction-agent-container"> {# Specific class #}
+    <h2 class="agent-title"><i class="fas fa-hard-hat"></i> Construction AI Assistant</h2> {# Example Icon #}
+    <p class="agent-description">
+        Provide project context or sales data below, then ask specific questions, request analysis,
+        or ask the AI to suggest tasks based on the information.
+    </p>
+    <hr class="agent-divider">
+
+    <div id="content-construction" class="content-panel agent-panel">
+        {# Area for Data Context Input #}
+        <div class="form-group">
+            <label for="constructionDataContext">Data Context (Optional):</label>
+            <textarea id="constructionDataContext" rows="8" class="form-control" placeholder="Paste relevant project details, budget excerpts, sales figures, timeline updates, etc. here..."></textarea>
+            <small class="form-text text-muted">Provide context related to your query for better analysis.</small>
+        </div>
+
+        {# Area for User Query/Task Request #}
+        <div class="form-group">
+            <label for="constructionQueryInput">Your Query or Task Request:</label>
+            <textarea id="constructionQueryInput" rows="4" class="form-control" placeholder="e.g., Compare budget vs actual for Phase 1. Forecast Q3 sales based on this data. Identify potential risks in the current schedule. Suggest tasks if materials are delayed."></textarea>
+        </div>
+
+        <button id="submitConstructionQueryBtn" class="btn btn-primary btn-agent-ask">
+            <i class="fas fa-cogs"></i> Analyze / Request Task
+        </button>
+
+        <div id="constructionAgentLoading" class="loading-indicator mt-3" style="display: none;">
+            <span>Analyzing...</span><div class="spinner"></div>
+        </div>
+        <div id="constructionAgentError" class="error-message mt-3" style="display: none;"></div> {# Specific error display #}
+
+        <div class="mt-4 agent-response-area">
+             <h4>AI Analysis / Task Suggestions:</h4>
+             <div id="constructionAgentOutput" class="agent-output construction-output">
+                 <p><i>The AI's insights or suggested tasks will appear here.</i></p>
+             </div>
+        </div>
+    </div>
+
+    {# Link back to dashboard #}
+    <p class="mt-4 text-center agent-back-link"><a href="{{ url_for('dashboard') }}">« Back to Dashboard</a></p>
+
+</div> {# End agent-container #}
+{% endblock %}
+
+{% block scripts %}
+    {# Load Font Awesome if using icons (optional) #}
+    {# <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script> #}
+    {# Link the specific JavaScript for THIS Construction Agent page #}
+    <script type="module" src="{{ url_for('static', filename='construction_agent.js') }}"></script>
+{% endblock %}

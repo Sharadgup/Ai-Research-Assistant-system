@@ -1,0 +1,212 @@
+/* ==========================
+   Base & Global Styles - Add Smooth Scroll
+   ========================== */
+   html {
+    scroll-behavior: smooth; /* Enable smooth scrolling for anchor links (#) */
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    background-color: #f8f9fa;
+    color: #343a40;
+    font-size: 16px;
+}
+
+/* ==========================
+   Buttons - Enhanced Hover
+   ========================== */
+
+.btn,
+button#generateBtn,
+button#sendChatBtn,
+button#sendDashboardChatBtn,
+button#submitEducationQueryBtn,
+button#submitHealthcareQueryBtn, /* Add button for healthcare agent */
+button#submitConstructionQueryBtn /* Add button for construction agent */
+{
+    /* Keep existing base styles: display, font-weight, color, text-align, vertical-align, cursor, background-color, border, padding, font-size, border-radius, text-decoration, line-height */
+    display: inline-block;
+    font-weight: 600;
+    color: #fff;
+    text-align: center;
+    vertical-align: middle;
+    cursor: pointer;
+    background-color: #007bff; /* Default blue */
+    border: 1px solid #007bff;
+    padding: 0.7rem 1.4rem;
+    font-size: 1rem;
+    border-radius: 5px;
+    text-decoration: none;
+    line-height: 1.5;
+    /* --- Add Transition --- */
+    transition: all 0.25s ease-in-out; /* Smooth transition for all properties */
+    box-shadow: 0 2px 4px rgba(0,0,0, 0.08); /* Subtle initial shadow */
+}
+
+.btn:hover:not(:disabled),
+button:hover:not(:disabled) /* Generic button hover */
+{
+    background-color: #0056b3; /* Default darker blue */
+    border-color: #0056b3;
+    transform: translateY(-2px); /* Lift effect */
+    box-shadow: 0 4px 8px rgba(0,0,0, 0.15); /* Enhanced shadow */
+}
+.btn:active:not(:disabled),
+button:active:not(:disabled) {
+    transform: translateY(0px); /* Push down on click */
+    box-shadow: 0 1px 3px rgba(0,0,0, 0.1); /* Less shadow on click */
+}
+
+
+.btn:disabled, button:disabled { /* Keep disabled style */
+    background-color: #adb5bd; border-color: #adb5bd; opacity: 0.65; cursor: not-allowed; transform: none; box-shadow: none;
+}
+
+/* Specific Hover Colors (Optional - override base hover if needed) */
+.btn-success:hover:not(:disabled), button#downloadPdfBtn:hover:not(:disabled) { background-color: #218838; border-color: #1e7e34; }
+.btn-secondary:hover:not(:disabled) { background-color: #5a6268; border-color: #545b62; }
+.btn-outline:hover { transform: none; box-shadow: none; } /* No lift for outline */
+.btn-hero:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25); } /* More lift for hero */
+.construction-agent-container .btn-agent-ask:hover:not(:disabled) { background-color: #e67311; border-color: #d0660e; } /* Keep specific hover */
+.healthcare-agent-container .btn-agent-ask:hover:not(:disabled) { background-color: #157347; border-color: #146c43; } /* Add hover for healthcare button */
+
+/* ==========================
+   Sidebar - Enhanced Hover & Animation
+   ========================== */
+
+/* (Keep existing .sidebar, .sidebar-nav, .sidebar-section styles) */
+
+.sidebar-section-title {
+    /* Keep existing styles: font-weight, cursor, padding, display, align-items, justify-content, border-bottom, margin-bottom, position, color */
+    font-weight: 600; cursor: pointer; padding: 0.8rem 0.5rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e9ecef; margin-bottom: 0.75rem; position: relative; color: #495057;
+    /* --- Add Transition --- */
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.sidebar-section-title:hover { background-color: #eef3f8; color: #0056b3;} /* Lighter blue hover */
+
+.sidebar-section-title::after {
+  content: '❯'; font-size: 0.9em; display: inline-block;
+  /* --- Add Transition --- */
+  transition: transform 0.25s ease-in-out;
+}
+details[open] > summary.sidebar-section-title::after {
+  transform: rotate(90deg);
+}
+summary::-webkit-details-marker, summary::marker { display: none; }
+
+.sidebar-submenu {
+    list-style: none; padding-left: 0.5rem; margin-top: 0.5rem; margin-bottom: 0;
+    max-height: 0; overflow: hidden;
+    /* --- Add Transition --- */
+    transition: max-height 0.35s ease-out, opacity 0.3s ease-out, margin-bottom 0.35s ease-out;
+    opacity: 0; /* Start hidden */
+}
+details[open] > .sidebar-submenu {
+     max-height: 600px; /* Adjust if needed */
+     margin-bottom: 1rem;
+     opacity: 1; /* Fade in */
+}
+.sidebar-submenu li { margin-bottom: 0.1rem; }
+.sidebar-submenu a {
+    text-decoration: none; color: #495057; padding: 0.5rem 0.8rem; display: block;
+    border-radius: 4px; font-size: 0.95rem;
+    /* --- Add Transition --- */
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease, padding-left 0.15s ease;
+}
+.sidebar-submenu a:hover,
+.sidebar-submenu a.active {
+    background-color: #e9f5ff; /* Lighter blue active background */
+    color: #0056b3;
+    font-weight: 500;
+    transform: translateX(4px); /* Slight indent on hover/active */
+    padding-left: 1.1rem; /* Increase indent */
+}
+
+/* ==========================
+   Agent Page Specific Styles - Hover Effects
+   ========================== */
+.agent-container {
+    /* ... Keep existing base styles ... */
+    transition: box-shadow 0.3s ease; /* Add transition for hover effect */
+}
+/* Optional: Slight shadow grow on agent container hover */
+/* .agent-container:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+} */
+
+.agent-panel { /* Style content panels within agent pages */
+    border: 1px solid #e9ecef;
+    padding: 1.5rem;
+    border-radius: 6px;
+    background-color: #fdfdff; /* Very light background */
+}
+
+/* Style the output areas */
+.agent-output {
+    margin-top: 1rem;
+    padding: 1.2rem;
+    background-color: #f0f4f8; /* Slightly different background */
+    border-radius: 5px;
+    border: 1px solid #dbe4ee;
+    min-height: 100px;
+    white-space: pre-wrap;
+    font-size: 1rem; /* Slightly larger font */
+    color: #212529;
+    transition: background-color 0.3s ease;
+}
+.agent-output:hover { /* Subtle hover for output area */
+    background-color: #e9eef3;
+}
+.agent-output p:first-child { margin-top: 0; }
+.agent-output i { color: #6c757d; }
+
+
+/* --- Healthcare Specific Styles --- */
+.healthcare-agent-container .agent-title { color: #198754; }
+.healthcare-agent-container .btn-agent-ask { background-color: #198754; border-color: #198754; }
+.healthcare-agent-container .btn-agent-ask:hover:not(:disabled) { background-color: #157347; border-color: #146c43; }
+#healthcareAgentOutput { background-color: #e9f5ec; border-color: #c3e6cb; }
+#healthcareAgentOutput:hover { background-color: #ddeee3; }
+
+/* --- Construction Specific Styles --- */
+.construction-agent-container .agent-title { color: #fd7e14; }
+.construction-agent-container .btn-agent-ask { background-color: #fd7e14; border-color: #fd7e14; }
+.construction-agent-container .btn-agent-ask:hover:not(:disabled) { background-color: #e67311; border-color: #d0660e; }
+#constructionAgentOutput { background-color: #fff8e1; border-color: #ffecb5; }
+#constructionAgentOutput:hover { background-color: #f7f0cc; }
+#constructionDataContext { font-family: monospace; font-size: 0.9em; min-height: 150px;}
+
+
+/* --- Education Specific Styles --- */
+/* Define specific colors if needed, otherwise it uses default agent styles */
+.education-agent-container .agent-title { color: #0d6efd; } /* Example: Use primary blue */
+.education-agent-container .btn-agent-ask { background-color: #0d6efd; border-color: #0d6efd; }
+.education-agent-container .btn-agent-ask:hover:not(:disabled) { background-color: #0b5ed7; border-color: #0a58ca; }
+#educationAgentOutput { background-color: #e7f1ff; border-color: #cce0ff; }
+#educationAgentOutput:hover { background-color: #dae7fc; }
+
+
+/* --- Chat Scroll Animation --- */
+.chat-messages {
+    /* Existing styles: flex-grow, height, overflow-y, border, padding, margin, background */
+    /* Add scroll-behavior for JS-based scrolling */
+    scroll-behavior: smooth;
+}
+
+/* Add a subtle animation when a new message appears (optional) */
+@keyframes fadeInMessage {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.message {
+    /* Keep existing styles */
+    animation: fadeInMessage 0.3s ease-out; /* Apply animation */
+}
+
+/* --- Responsiveness --- */
+/* (Keep existing media queries) */
+@media (max-width: 768px) { /*...*/ }
+@media (max-width: 576px) { /*...*/ }

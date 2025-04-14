@@ -56,22 +56,25 @@ if google_enabled:
 MONGO_URI = os.getenv("MONGODB_URI"); DB_NAME = os.getenv("MONGODB_DB_NAME")
 db = None; registrations_collection = None; input_prompts_collection = None;
 documentation_collection = None; chats_collection = None; general_chats_collection = None;
-education_chats_collection = None; healthcare_chats_collection = None; # <-- Add Healthcare collection variable
+education_chats_collection = None; healthcare_chats_collection = None;
+construction_agent_interactions_collection = None # <-- NEW Construction Interaction Collection
 
 if not MONGO_URI or not DB_NAME: logging.critical("Missing MongoDB Config")
 else:
     try:
         mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000); mongo_client.admin.command('ismaster')
         db = mongo_client[DB_NAME]; logging.info(f"MongoDB connected. DB: '{DB_NAME}'")
+        # Define collections
         registrations_collection = db["registrations"]
         input_prompts_collection = db["input_prompts"]
         documentation_collection = db["documentation"]
         chats_collection = db["chats"]
         general_chats_collection = db["general_chats"]
         education_chats_collection = db["education_chats"]
-        healthcare_chats_collection = db["healthcare_chats"] # <-- Assign healthcare collection
-        logging.info("MongoDB Collections assigned.")
-        # Ensure Indexes...
+        healthcare_chats_collection = db["healthcare_chats"]
+        construction_agent_interactions_collection = db["construction_agent_interactions"] # <-- Assign collection
+
+        # Ensure Indexes... (Add necessary indexes)
         try: registrations_collection.create_index("username", unique=True, sparse=True)
         except: logging.warning("Username index issue")
         try: registrations_collection.create_index("email", unique=True, sparse=True)
@@ -80,10 +83,12 @@ else:
         except: logging.warning("Google ID index issue")
         try: general_chats_collection.create_index("user_id", unique=True)
         except: logging.warning("General chat index issue")
-        try: education_chats_collection.create_index("user_id") # Index, not unique
-        except Exception as index_err: logging.warning(f"Education chat index warn: {index_err}")
-        try: healthcare_chats_collection.create_index("user_id") # <-- Add index for healthcare chat
-        except Exception as index_err: logging.warning(f"Healthcare chat index warn: {index_err}")
+        try: education_chats_collection.create_index("user_id")
+        except Exception as idx_err: logging.warning(f"Edu chat index warn: {idx_err}")
+        try: healthcare_chats_collection.create_index("user_id")
+        except Exception as idx_err: logging.warning(f"Health chat index warn: {idx_err}")
+        try: construction_agent_interactions_collection.create_index("user_id") # <-- Add index for construction interactions
+        except Exception as idx_err: logging.warning(f"Construction chat index warn: {idx_err}")
 
     except Exception as e: logging.critical(f"MongoDB init error: {e}"); db = None
 
@@ -95,17 +100,17 @@ socketio = SocketIO( app, async_mode='eventlet', cors_allowed_origins=allowed_or
 # --- Gemini API Configuration ---
 api_key = os.getenv("GEMINI_API_KEY"); model_name = "gemini-1.5-flash"; model = None
 if api_key:
-    try: genai.configure(api_key=api_key); safety_settings=[{"category":c,"threshold":"BLOCK_MEDIUM_AND_ABOVE"}for c in ["HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH","HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]; model=genai.GenerativeModel(model_name,safety_settings=safety_settings); logging.info(f"Gemini model '{model_name}' init.")
+    try: # Init Gemini...
+        genai.configure(api_key=api_key); safety_settings=[{"category":c,"threshold":"BLOCK_MEDIUM_AND_ABOVE"}for c in ["HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH","HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]; model=genai.GenerativeModel(model_name,safety_settings=safety_settings); logging.info(f"Gemini model '{model_name}' init.")
     except Exception as e:logging.error(f"Error init Gemini: {e}")
 else:logging.warning("GEMINI_API_KEY not found.")
-
 
 # --- Authentication Helpers ---
 def is_logged_in(): return 'user_id' in session
 def login_user(user_doc): session.clear(); session['user_id'] = str(user_doc['_id']); session['username'] = user_doc.get('username') or user_doc.get('name') or f"User_{str(user_doc['_id'])[:6]}"; session['login_method'] = user_doc.get('login_method', 'password'); logging.info(f"User '{session['username']}' logged in via {session['login_method']}.")
 
 # --- HTTP Routes ---
-# (Keep routes: /, /register, /login, /google/authorized, /logout, /dashboard, /index, /generate_report)
+# (Keep: /, /register, /login, /google/authorized, /logout, /dashboard, /index, /generate_report)
 @app.route('/')
 def landing_page(): return render_template('landing.html', now=datetime.utcnow(), google_login_enabled=google_enabled)
 @app.route('/register', methods=['GET', 'POST'])
@@ -113,9 +118,14 @@ def register(): # (Keep logic)
     if is_logged_in(): return redirect(url_for('dashboard'))
     if request.method == 'POST':
         if db is None: flash("DB error.", "danger"); return render_template('register.html', now=datetime.utcnow(), google_login_enabled=google_enabled)
+        # ... validation ...
         username=request.form.get('username','').strip(); password=request.form.get('password',''); confirm=request.form.get('confirm_password','')
-        error=None; # Basic validation...
-        if not username or not password or password!=confirm or len(password)<6: flash("Invalid input.", "warning"); return render_template('register.html', username=username, now=datetime.utcnow(), google_login_enabled=google_enabled)
+        error=None;
+        if not username: error="Username required." # etc...
+        elif not password: error="Password required."
+        elif password!=confirm: error="Passwords don't match."
+        elif len(password)<6: error="Password min 6 chars."
+        if error: flash(error, "warning"); return render_template('register.html', username=username, now=datetime.utcnow(), google_login_enabled=google_enabled)
         hash_val=generate_password_hash(password)
         try: user_doc={"username":username, "password_hash":hash_val, "created_at":datetime.utcnow(), "login_method":"password"}; registrations_collection.insert_one(user_doc); flash("Registered!", "success"); return redirect(url_for('login'))
         except DuplicateKeyError: flash("Username exists.", "danger"); return render_template('register.html', username=username, now=datetime.utcnow(), google_login_enabled=google_enabled)
@@ -144,7 +154,7 @@ def google_auth_callback(): # (Keep logic)
         if not google_id: flash("No Google ID.", "danger"); return redirect(url_for("login"))
         user_doc = registrations_collection.find_one({"google_id": google_id})
         if not user_doc and email: user_doc = registrations_collection.find_one({"email": email})
-        if user_doc: # Found user - Link/Update
+        if user_doc: # Found user
             update_data={"$set":{"last_login_at":datetime.utcnow(),"login_method":"google"}};
             if not user_doc.get("google_id"):update_data["$set"]["google_id"]=google_id
             if not user_doc.get("name")and name:update_data["$set"]["name"]=name
@@ -204,124 +214,164 @@ def generate_report_route(): # (Keep logic)
     except Exception as e:logging.error(f"ERROR gen report: {e}"); return jsonify({"error":"Server error"}),500
 
 # --- Agent Routes ---
-@app.route('/education_agent')
-def education_agent_page(): # Keep Education Agent Page route
+@app.route('/education_agent') # Keep Education Agent Page
+def education_agent_page():
     if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
     return render_template('education_agent.html', now=datetime.utcnow())
 
-@app.route('/education_agent_query', methods=['POST'])
-def education_agent_query(): # Keep Education Agent Query route (with DB save)
+@app.route('/education_agent_query', methods=['POST']) # Keep Education Agent Query
+def education_agent_query(): # (Keep logic including DB save)
     if not is_logged_in(): return jsonify({"error": "Auth required."}), 401
     if not model: return jsonify({"error": "AI unavailable."}), 503
     if db is None or education_chats_collection is None: return jsonify({"error": "DB unavailable."}), 503
     if not request.is_json: return jsonify({"error": "Need JSON"}), 400
     data=request.get_json(); user_query=data.get('query','').strip(); username=session.get('username','User'); user_id_str=session.get('user_id')
-    if not user_query or not user_id_str: return jsonify({"error":"Missing query or session info."}), 400
-    try: user_id = ObjectId(user_id_str)
+    if not user_query or not user_id_str: return jsonify({"error":"Missing query/session."}), 400
+    try: user_id=ObjectId(user_id_str)
     except: return jsonify({"error": "Session error."}), 500
-    logging.info(f"Edu Agent query from '{username}': '{user_query[:100]}...'")
     interaction_id = None # Save query
     try: doc={"user_id":user_id,"username":username,"query":user_query,"timestamp":datetime.utcnow(),"ai_answer":None}; interaction_id=education_chats_collection.insert_one(doc).inserted_id
     except Exception as e: logging.error(f"Err save edu query: {e}")
     prompt = f"Edu Assistant... Query: {user_query}\n Answer:"; ai_resp = "[AI Err]"
     try: # Call AI & Save Answer
         response=model.generate_content(prompt)
-        if response.candidates: ai_resp=response.text if response.text else "[AI empty answer]"
-        else: ai_resp="[AI response blocked/empty]"
+        if response.candidates: ai_resp=response.text if response.text else "[AI empty]"
+        else: ai_resp="[AI blocked/empty]"
         if interaction_id and not ai_resp.startswith("["):
             try: education_chats_collection.update_one({"_id":interaction_id},{"$set":{"ai_answer":ai_resp,"answered_at":datetime.utcnow()}})
             except Exception as e: logging.error(f"Err update edu answer: {e}")
         return jsonify({"answer": ai_resp })
     except Exception as e: logging.error(f"Err proc edu query: {e}"); return jsonify({"error": "Server error."}), 500
 
-# *** NEW Route for Dedicated Healthcare Agent Page ***
-@app.route('/healthcare_agent')
+@app.route('/healthcare_agent') # Keep Healthcare Agent Page
 def healthcare_agent_page():
-    """Renders the dedicated page for the Healthcare AI Assistant."""
+    if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
+    return render_template('healthcare_agent.html', now=datetime.utcnow())
+
+@app.route('/healthcare_agent_query', methods=['POST']) # Keep Healthcare Agent Query
+def healthcare_agent_query(): # (Keep logic including DB save)
+    if not is_logged_in(): return jsonify({"error": "Auth required."}), 401
+    if not model: return jsonify({"error": "AI unavailable."}), 503
+    if db is None or healthcare_chats_collection is None: return jsonify({"error": "DB unavailable."}), 503
+    if not request.is_json: return jsonify({"error": "Need JSON"}), 400
+    data=request.get_json(); user_query=data.get('query','').strip(); username=session.get('username','User'); user_id_str=session.get('user_id')
+    if not user_query or not user_id_str: return jsonify({"error":"Missing query/session."}), 400
+    try: user_id = ObjectId(user_id_str)
+    except Exception as e: logging.error(f"Invalid user_id format: {e}"); return jsonify({"error": 'Session error.'}), 500
+    interaction_id = None # Save query
+    try: doc={"user_id":user_id,"username":username,"query":user_query,"timestamp":datetime.utcnow(),"ai_answer":None}; interaction_id=healthcare_chats_collection.insert_one(doc).inserted_id
+    except Exception as e: logging.error(f"Err save health query: {e}")
+    prompt = f"""Healthcare Info Assistant Disclaimer... Query: {user_query}\n Answer:""" # Use full prompt
+    ai_resp = "[AI Err]"
+    try: # Call AI & Save Answer
+        response=model.generate_content(prompt, safety_settings=safety_settings)
+        if response.candidates: ai_resp=response.text if response.text else "[AI empty]"
+        else: ai_resp="[AI blocked/empty]"; logging.error(f"Health AI blocked. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
+        if interaction_id and not ai_resp.startswith("["):
+            try: healthcare_chats_collection.update_one({"_id":interaction_id},{"$set":{"ai_answer":ai_resp,"answered_at":datetime.utcnow()}})
+            except Exception as e: logging.error(f"Err update health answer: {e}")
+        return jsonify({"answer": ai_resp })
+    except Exception as e: logging.error(f"Err proc health query: {e}"); return jsonify({"error": "Server error."}), 500
+
+# *** NEW Route for Dedicated Construction Agent Page ***
+@app.route('/construction_agent')
+def construction_agent_page():
+    """Renders the dedicated page for the Construction AI Assistant."""
     if not is_logged_in():
         flash("Please log in to use the AI agents.", "warning")
         return redirect(url_for('login'))
-    return render_template('healthcare_agent.html', now=datetime.utcnow())
+    # Pass any specific data needed for the construction template
+    return render_template('construction_agent.html', now=datetime.utcnow())
 
-# *** NEW Route for Healthcare Agent API Query (with DB save) ***
-@app.route('/healthcare_agent_query', methods=['POST'])
-def healthcare_agent_query():
-    """Handles queries for the Healthcare AI agent and saves interactions."""
+# *** NEW Route for Construction Agent API Query (with DB save) ***
+@app.route('/construction_agent_query', methods=['POST'])
+def construction_agent_query():
+    """Handles queries/data context for the Construction AI agent and saves interactions."""
     if not is_logged_in(): return jsonify({"error": "Authentication required."}), 401
     if not model: return jsonify({"error": "AI model unavailable."}), 503
-    if db is None or healthcare_chats_collection is None: # Check specific collection
+    if db is None or construction_agent_interactions_collection is None: # Check specific collection
         return jsonify({"error": "Database service unavailable."}), 503
     if not request.is_json: return jsonify({"error": "Need JSON"}), 400
 
     data = request.get_json()
     user_query = data.get('query', '').strip()
+    data_context = data.get('context', '').strip() # Get optional data context
     username = session.get('username', 'User')
     user_id_str = session.get('user_id')
 
-    if not user_query: return jsonify({"error": "No query provided."}), 400
+    if not user_query: return jsonify({"error": "No query or task request provided."}), 400
     if not user_id_str: return jsonify({"error": "User session error."}), 401
 
-    logging.info(f"Healthcare Agent query from '{username}': '{user_query[:100]}...'")
+    logging.info(f"Construction Agent query from '{username}': '{user_query[:100]}...' with context length: {len(data_context)}")
 
     try: user_id_object = ObjectId(user_id_str)
     except Exception as e: logging.error(f"Invalid user_id format: {e}"); return jsonify({"error": 'Internal session error.'}), 500
 
-    # --- Save User Query ---
+    # --- Save User Query & Context ---
     interaction_doc_id = None
     try:
-        interaction_doc = { "user_id": user_id_object, "username": username, "query": user_query,
+        interaction_doc = { "user_id": user_id_object, "username": username,
+                            "query": user_query, "data_context": data_context, # Store context provided
                             "timestamp": datetime.utcnow(), "ai_answer": None }
-        interaction_doc_id = healthcare_chats_collection.insert_one(interaction_doc).inserted_id
-        logging.info(f"Saved healthcare query for user {user_id_str} with DB ID: {interaction_doc_id}")
+        interaction_doc_id = construction_agent_interactions_collection.insert_one(interaction_doc).inserted_id
+        logging.info(f"Saved construction query for user {user_id_str} with DB ID: {interaction_doc_id}")
     except Exception as db_err:
-        logging.error(f"Failed save healthcare query for {username}: {db_err}")
+        logging.error(f"Failed save construction query for {username}: {db_err}")
         interaction_doc_id = None
 
-    # --- Define Healthcare Prompt ---
-    # IMPORTANT: For actual healthcare advice, consult a professional.
-    # This prompt should explicitly state it's NOT providing medical diagnoses.
-    healthcare_prompt = f"""
-    You are an AI Healthcare Information Assistant. Your purpose is to provide general health information, explain medical concepts, or suggest general wellness tips based on the user's query.
-    **Disclaimer:** You cannot provide medical diagnoses or replace consultation with a qualified healthcare professional. If the user asks for a diagnosis or seems to describe a serious condition, advise them to seek professional medical help immediately.
+    # --- Define Construction Prompt ---
+    # This needs to be carefully crafted based on expected inputs and desired outputs
+    construction_prompt = f"""
+    You are a Constructive AI Agent assisting with construction project management and sales data analysis.
+    Analyze the provided context and the user's query/request to generate insights, suggest actions, or answer questions.
 
-    User Query:
+    Data Context (if provided):
+    ---
+    {data_context if data_context else "No specific data context provided for this query."}
+    ---
+
+    User Query/Request:
     ---
     {user_query}
     ---
 
-    Please provide a helpful and informative answer within the scope of general health information, adhering to the disclaimer.
+    Based on the query and context, provide a relevant analysis, answer, or suggest actionable tasks.
+    If suggesting tasks, clearly state the task, why it's needed, and who might be responsible.
+    Example Task Format:
+    **Suggested Task:** Review budget for Phase 2 wiring.
+    **Reason:** Actual costs are trending 15% higher than budget based on preliminary reports.
+    **Assignee Suggestion:** Project Manager, Electrical Lead.
     """
-
     # --- Get AI Response ---
-    ai_response_text = "[Error processing healthcare query]"
+    ai_response_text = "[Error processing construction query]"
     try:
-        response = model.generate_content(healthcare_prompt, safety_settings=safety_settings) # Apply safety settings
+        response = model.generate_content(construction_prompt, safety_settings=safety_settings)
         if response.candidates:
              ai_response_text = response.text if hasattr(response, 'text') else response.candidates[0].content.parts[0].text
              if not ai_response_text: ai_response_text = "[AI returned empty answer]"
         else:
              ai_response_text = "[AI response blocked/empty]"
-             logging.error(f"Healthcare AI response invalid/blocked. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
-        logging.info(f"Healthcare Agent response generated for '{username}'.")
+             logging.error(f"Construction AI response invalid/blocked. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
+        logging.info(f"Construction Agent response generated for '{username}'.")
 
         # --- Update DB with AI Answer ---
         if interaction_doc_id and not ai_response_text.startswith("[Error"):
             try:
-                healthcare_chats_collection.update_one( {"_id": interaction_doc_id}, {"$set": {"ai_answer": ai_response_text, "answered_at": datetime.utcnow()}} )
-                logging.info(f"Updated healthcare chat doc {interaction_doc_id} with AI answer.")
-            except Exception as db_err: logging.error(f"Failed update healthcare chat doc {interaction_doc_id}: {db_err}")
-        elif not ai_response_text.startswith("[Error:") : logging.warning("Could not save healthcare AI answer because initial query save failed.")
+                construction_agent_interactions_collection.update_one( {"_id": interaction_doc_id}, {"$set": {"ai_answer": ai_response_text, "answered_at": datetime.utcnow()}} )
+                logging.info(f"Updated construction interaction doc {interaction_doc_id} with AI answer.")
+            except Exception as db_err: logging.error(f"Failed update construction interaction doc {interaction_doc_id}: {db_err}")
+        elif not ai_response_text.startswith("[Error:") : logging.warning("Could not save construction AI answer because initial query save failed.")
 
         return jsonify({"answer": ai_response_text })
 
     except Exception as e:
-        logging.error(f"Error processing healthcare query for '{username}': {e}")
+        logging.error(f"Error processing construction query for '{username}': {e}")
         logging.error(traceback.format_exc())
         if interaction_doc_id: # Try to save error state
-             try: healthcare_chats_collection.update_one({"_id": interaction_doc_id}, {"$set": {"ai_answer": f"[Error: {str(e)[:100]}]"}})
+             try: construction_agent_interactions_collection.update_one({"_id": interaction_doc_id}, {"$set": {"ai_answer": f"[Error: {str(e)[:100]}]"}})
              except: pass
         return jsonify({"error": "Server error processing query."}), 500
-# ********************************************************
+# ***********************************************************
 
 
 # --- SocketIO Event Handlers ---
@@ -332,7 +382,7 @@ def handle_connect(): logging.info(f"(Report Chat) Connect: {request.sid}")
 @socketio.on('disconnect')
 def handle_disconnect(): logging.info(f"(Report Chat) Disconnect: {request.sid}")
 @socketio.on('send_message')
-def handle_send_message(data): # (Keep detailed logic)
+def handle_send_message(data): # (Keep logic)
     sid=request.sid;logging.info(f"--- Report Chat Msg START (SID:{sid}) ---")
     if db is None:emit('error',{'message':'DB unavailable.'},room=sid);return
     user_msg=data.get('text');doc_id_str=data.get('documentation_id');
@@ -366,7 +416,7 @@ def handle_dashboard_connect():
 @socketio.on('disconnect', namespace='/dashboard_chat')
 def handle_dashboard_disconnect(): logging.info(f"User '{session.get('username', 'Unknown')}' disconnected dash chat: {request.sid}")
 @socketio.on('send_dashboard_message', namespace='/dashboard_chat')
-def handle_dashboard_chat(data): # (Keep existing logic with DB saves)
+def handle_dashboard_chat(data): # (Keep logic)
     sid=request.sid;logging.debug(f"--- Dash Chat START (SID:{sid}) ---")
     if not is_logged_in():emit('error',{'message':'Auth required.'},room=sid,namespace='/dashboard_chat');return
     if db is None or general_chats_collection is None: emit('error',{'message':'Chat DB unavailable.'},room=sid,namespace='/dashboard_chat');return
@@ -380,7 +430,6 @@ def handle_dashboard_chat(data): # (Keep existing logic with DB saves)
     logging.info(f"Dash Chat from {username}: '{user_msg[:50]}...'")
     try:# Save User Msg
         update_res=general_chats_collection.update_one({"user_id":user_id},{"$push":{"messages":{"role":"user","text":user_msg,"timestamp":datetime.utcnow()}},"$setOnInsert":{"user_id":user_id,"username":username,"start_timestamp":datetime.utcnow()}},upsert=True)
-        logging.info(f"User msg save result: {update_res.raw_result}")
     except Exception as e:logging.error(f"Err save dash user msg:{e}")
     ai_resp="[AI Err]"
     try:# Get AI Resp
@@ -394,8 +443,6 @@ def handle_dashboard_chat(data): # (Keep existing logic with DB saves)
         if not ai_resp.startswith("[AI Err") and general_chats_collection is not None:
              try:general_chats_collection.update_one({"user_id":user_id},{"$push":{"messages":{"role":"AI","text":ai_resp,"timestamp":datetime.utcnow()}}})
              except Exception as e:logging.error(f"Err save dash AI resp:{e}")
-        elif general_chats_collection is None: logging.error(f"Cannot save AI rsp, collection is None!")
-        else: logging.warning(f"Skipping save for AI error: '{ai_resp}'")
         emit('receive_dashboard_message',{'user':'AI','text':ai_resp},room=sid,namespace='/dashboard_chat')
     except Exception as e:logging.error(f"Err proc dash chat:{e}");emit('error',{'message':'Server error.'},room=sid,namespace='/dashboard_chat')
     finally:emit('typing_indicator',{'isTyping':False},room=sid,namespace='/dashboard_chat');logging.debug(f"--- Dash Chat END (SID:{sid}) ---")
