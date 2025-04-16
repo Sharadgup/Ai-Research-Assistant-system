@@ -3,36 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Use dynamic title block -->
     <title>{% block title %}AI Assistant{% endblock %}</title>
-    <!-- Link main CSS file -->
+
+    {# Google Fonts - Poppins #}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    {# Link main CSS file #}
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <!-- Block for extra head elements (like page-specific CSS or JS libraries) -->
+
+    {# Block for extra head elements (like page-specific CSS or JS libraries) #}
     {% block head_extra %}{% endblock %}
 </head>
 <body>
+    {# --- Header with Animated Navbar --- #}
     <header class="main-header">
-        <div class="logo">🤖 AI Assistant</div>
-        <nav class="main-nav">
-            {% if session.user_id %}
-                {# Navigation for logged-in users #}
-                <span class="welcome-user">Welcome, {{ session.username }}!</span>
-                <a href="{{ url_for('dashboard') }}">Dashboard</a>
-                <a href="{{ url_for('logout') }}">Logout</a>
-            {% else %}
-                {# Navigation for logged-out users #}
-                <a href="{{ url_for('login') }}">Login</a>
-                <a href="{{ url_for('register') }}">Register</a>
-            {% endif %}
-        </nav>
+        {# Added a container for better centering and spacing #}
+        <div class="header-container">
+            <div class="logo">
+                <a href="{{ url_for('landing_page') }}">🚀 AI Assistant</a> {# Changed icon #}
+            </div>
+            <nav class="main-nav">
+                {% if session.user_id %}
+                    {# Navigation for logged-in users #}
+                    {# Apply nav-link class for consistent styling #}
+                    <span class="welcome-user">Welcome, {{ session.username }}!</span>
+                    <a href="{{ url_for('dashboard') }}" class="nav-link">Dashboard</a>
+                    <a href="{{ url_for('logout') }}" class="nav-link">Logout</a>
+                {% else %}
+                    {# Navigation for logged-out users #}
+                    {# Apply nav-link class for consistent styling #}
+                    <a href="{{ url_for('login') }}" class="nav-link">Login</a>
+                    <a href="{{ url_for('register') }}" class="nav-link">Register</a>
+                {% endif %}
+            </nav>
+        </div>
     </header>
 
+    {# --- Main Content Area --- #}
     <main class="main-container">
         {# Display Flask flash messages #}
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 <div class="flash-messages-container">
                 {% for category, message in messages %}
+                    {# Use more specific classes like success, error, info, warning #}
                     <div class="flash flash-{{ category }}">{{ message }}</div>
                 {% endfor %}
                 </div>
@@ -44,9 +60,10 @@
         {% endblock %}
     </main>
 
+    {# --- Footer --- #}
     <footer class="main-footer">
-        <!-- Use server-side datetime if passed, otherwise just year -->
-        <p>© {% if now %}{{ now.year }}{% else %}2024{% endif %} Your Company Name. All rights reserved.</p>
+        {# Pass 'now' from Flask context or use fallback #}
+        <p>© {% if now %}{{ now.year }}{% else %}{{ current_year or '2024' }}{% endif %} AI Assistant Inc. All rights reserved.</p>
     </footer>
 
     {# --- Global JS Libraries (Load before page-specific scripts if needed) --- #}

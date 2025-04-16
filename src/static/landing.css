@@ -1,221 +1,455 @@
-/* ==========================
-   Landing Page Specific Styles
-   ========================== */
+/* Import Google Font */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
 
-/* --- Landing Header --- */
+/* General Styles */
+body {
+    font-family: 'Poppins', sans-serif; /* Changed font */
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    line-height: 1.7; /* Slightly adjusted */
+    background-color: #1F2937; /* New dark background */
+    color: #F3F4F6; /* New light text color */
+    scroll-behavior: smooth; /* Added for smooth scroll */
+}
+
+a {
+    text-decoration: none;
+    color: #14B8A6; /* Primary Accent (Teal) */
+    transition: color 0.3s ease, transform 0.2s ease; /* Added transform transition */
+}
+
+a:hover {
+    color: #5EEAD4; /* Lighter Teal for hover */
+    /* transform: translateY(-1px); */ /* Optional subtle effect */
+}
+
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Header & Navigation */
 .landing-header {
-    background-color: #fff; /* White header */
-    color: #343a40; /* Dark text */
-    padding: 0.8rem 2rem; /* Adjust padding */
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-    border-bottom: 1px solid #e9ecef;
+    background-color: rgba(31, 41, 55, 0.85); /* Dark background, slightly transparent */
+    color: #F3F4F6;
+    padding: 0.8rem 0; /* Adjusted padding */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1000;
+    transition: transform 0.4s ease-in-out, background-color 0.3s ease; /* Added transform transition for hiding */
+    backdrop-filter: blur(5px); /* Optional: Frosted glass effect */
 }
 
-.landing-header .logo {
-    color: #0056b3; /* Use primary blue for logo text */
+/* Style for the hidden header */
+.landing-header.header-hidden {
+    transform: translateY(-100%);
 }
 
-.landing-nav a {
-    color: #495057; /* Dark grey nav links */
-    font-weight: 500;
-}
-.landing-nav a:hover {
-    color: #0056b3;
-}
-/* Outline button style */
-.btn-outline {
-    background-color: transparent;
-    border-color: #ced4da; /* Light grey border */
-    color: #495057; /* Dark grey text */
-}
-.btn-outline:hover {
-    background-color: #f1f3f5; /* Very light grey background on hover */
-    border-color: #adb5bd;
-    color: #0056b3;
+/* Style for when scrolled (optional solid background) */
+.landing-header.scrolled {
+    background-color: #111827; /* Slightly darker solid background */
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
-
-/* --- Hero Section --- */
-.landing-hero {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); /* Blue gradient */
-    color: white;
-    text-align: center;
-    padding: 5rem 1rem; /* Generous padding */
-    margin-top: -1.5rem; /* Adjust to overlap slightly if desired, depending on header height */
-    clip-path: polygon(0 0, 100% 0, 100% 90%, 0 100%); /* Angled bottom shape */
-    margin-bottom: 2rem; /* Space below hero */
-}
-
-.hero-content {
-    max-width: 800px;
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1100px;
     margin: 0 auto;
+    padding: 0 2rem;
 }
 
-.landing-hero h1 {
-    font-size: 2.8rem; /* Larger hero title */
-    font-weight: 700;
-    margin-bottom: 1rem;
-    color: white; /* Ensure heading is white */
-    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+.logo a {
+    font-size: 1.8rem;
+    font-weight: 600; /* Adjusted weight */
+    color: #FFFFFF; /* White logo */
+    transition: color 0.3s ease;
+}
+.logo a:hover {
+    color: #14B8A6; /* Teal hover */
 }
 
-.landing-hero .subtitle {
-    font-size: 1.2rem;
-    margin-bottom: 2rem;
-    color: #e9ecef; /* Lighter subtitle text */
-    opacity: 0.9;
+.nav-links {
+    display: flex;
 }
 
-.btn-hero {
-    padding: 0.9rem 2.5rem; /* Larger button */
-    font-size: 1.2rem;
-    font-weight: bold;
-    background-color: #ffc107; /* Yellow accent color */
-    border-color: #ffc107;
-    color: #343a40; /* Dark text on yellow */
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-}
-.btn-hero:hover {
-    background-color: #e0a800;
-    border-color: #d39e00;
-    transform: translateY(-2px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
+.nav-links li {
+    margin-left: 1.5rem;
 }
 
-.hero-subtext {
-    margin-top: 1rem;
-    font-size: 0.9rem;
-    color: #ced4da;
+.nav-links a {
+    color: #D1D5DB; /* Slightly dimmer nav links */
+    padding: 0.6rem 0.8rem; /* Adjusted padding */
+    border-radius: 5px;
+    font-weight: 400;
+    transition: background-color 0.3s ease, color 0.3s ease, transform 0.2s ease;
+    position: relative; /* For pseudo-element */
+    overflow: hidden; /* For effect */
+}
+.nav-links a::after { /* Add underline effect */
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background: #14B8A6;
+    transition: all 0.3s ease;
+    transform: translateX(-50%);
 }
 
-/* --- General Landing Section Styling --- */
-.landing-section {
-    padding: 3rem 1rem;
-    max-width: 1100px; /* Limit content width */
-    margin: 2rem auto;
+.nav-links a:hover {
+    color: #FFFFFF; /* White on hover */
+    background-color: rgba(20, 184, 166, 0.1); /* Faint teal background */
+}
+.nav-links a:hover::after {
+    width: 80%; /* Underline grows */
 }
 
-.landing-section h2 {
-    text-align: center;
-    font-size: 2rem;
-    color: #0056b3;
-    margin-bottom: 2.5rem;
+/* Hero Section */
+.hero-section {
     position: relative;
-    padding-bottom: 0.5rem;
+    color: #fff;
+    text-align: center;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 0 2rem;
+    overflow: hidden;
 }
-/* Underline effect for section titles */
-.landing-section h2::after {
+
+/* Video Background */
+.animated-video-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    background-color: #111827; /* Darker fallback */
+}
+.animated-video-background p { /* Placeholder text style */
+    color: #4B5563; /* Dimmer placeholder text */
+    font-size: 1.5rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    margin: 0;
+}
+.animated-video-background video,
+.animated-video-background canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Content Overlay */
+.hero-content {
+    position: relative;
+    z-index: 1;
+    background-color: rgba(17, 24, 39, 0.6); /* Darker overlay */
+    padding: 3rem 2.5rem; /* Adjusted padding */
+    border-radius: 10px;
+    max-width: 800px;
+    margin-top: 80px; /* Offset for fixed header */
+    backdrop-filter: blur(3px); /* Subtle blur for overlay */
+    border: 1px solid rgba(243, 244, 246, 0.1); /* Subtle border */
+}
+
+.hero-content h1 {
+    font-size: 3.2rem;
+    margin-bottom: 1rem;
+    color: #FFFFFF;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+
+.hero-content p {
+    font-size: 1.25rem;
+    margin-bottom: 2.5rem;
+    color: #E5E7EB;
+    font-weight: 300;
+}
+
+/* CTA Button */
+.cta-button {
+    background: linear-gradient(90deg, #14B8A6, #8B5CF6); /* Gradient background */
+    color: #FFFFFF;
+    padding: 0.9rem 2.2rem; /* Adjusted padding */
+    border-radius: 50px; /* Pill shape */
+    font-size: 1.15rem;
+    font-weight: 600;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, background 0.3s ease; /* Added background transition */
+    display: inline-block;
+    border: none;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.cta-button:hover {
+    transform: translateY(-4px) scale(1.03); /* Lift and scale effect */
+    box-shadow: 0 8px 25px rgba(20, 184, 166, 0.4); /* Teal glow */
+    color: #fff;
+    background: linear-gradient(90deg, #5EEAD4, #A78BFA); /* Lighter gradient on hover */
+}
+
+/* Content Sections */
+.content-section {
+    padding: 5rem 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+    text-align: center;
+    border-bottom: 1px solid #374151; /* Separator line */
+}
+.content-section:last-of-type {
+     border-bottom: none; /* No line on last section */
+}
+
+#about { /* First content section padding */
+    padding-top: calc(5rem + 80px); /* Keep padding + header offset */
+}
+
+.content-section.alt-bg {
+    background-color: #111827; /* Darker alternate background */
+}
+
+.content-section h2 {
+    font-size: 2.8rem;
+    margin-bottom: 3rem;
+    position: relative;
+    display: inline-block;
+    font-weight: 600;
+    color: #FFFFFF;
+}
+.content-section h2::after {
     content: '';
     display: block;
-    width: 60px;
-    height: 3px;
-    background-color: #007bff;
-    margin: 0.5rem auto 0;
+    width: 0;
+    height: 4px; /* Thicker underline */
+    background: linear-gradient(90deg, #14B8A6, #8B5CF6); /* Gradient underline */
+    transition: width .4s ease-out; /* Slower transition */
+    position: absolute;
+    bottom: -10px; /* Lower underline */
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 2px;
+}
+.content-section:hover h2::after {
+    width: 80%; /* Wider underline on section hover */
 }
 
-
-/* --- Features Section --- */
-.features-grid {
+/* Feature Grid */
+.feature-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Responsive grid */
-    gap: 2rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Slightly larger min */
+    gap: 2.5rem; /* Increased gap */
+    margin-top: 3rem;
+    text-align: left;
 }
 
 .feature-item {
-    background-color: #fff;
-    padding: 2rem;
-    text-align: center;
-    border-radius: 8px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.07);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.feature-item:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    background: #374151; /* Slightly lighter dark bg */
+    padding: 2.5rem;
+    border-radius: 12px; /* More rounded */
+    box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    border: 1px solid transparent; /* Prepare for border transition */
 }
 
-.feature-icon {
-    font-size: 2.5rem; /* Larger icons */
-    margin-bottom: 1rem;
-    line-height: 1; /* Prevent extra space */
+.feature-item:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.3);
+    border-color: #14B8A6; /* Teal border on hover */
 }
 
 .feature-item h3 {
-    font-size: 1.3rem;
-    color: #0056b3;
-    margin-bottom: 0.75rem;
-}
-
-.feature-item p {
-    font-size: 0.95rem;
-    color: #495057;
-}
-
-
-/* --- Tech Section --- */
-.tech-section {
-    background-color: #e9ecef; /* Light grey background */
-    border-radius: 8px;
-    padding: 3rem;
-}
-
-.tech-section ul {
-    list-style: none;
-    padding: 0;
-}
-.tech-section li {
-    margin-bottom: 0.8rem;
-    font-size: 1.05rem;
-}
-.tech-section li strong {
-    color: #0056b3;
-}
-
-/* --- Call to Action Section --- */
-.cta-section {
-    text-align: center;
-    background-color: #0056b3; /* Match header */
-    color: white;
-    padding: 3rem 1rem;
-    border-radius: 8px;
-}
-.cta-section h2 {
-    color: white;
+    color: #14B8A6; /* Teal heading */
     margin-bottom: 1rem;
+    font-size: 1.4rem;
+    font-weight: 600;
 }
-.cta-section h2::after {
-    background-color: #ffc107; /* Accent underline */
+.feature-item p {
+    color: #D1D5DB; /* Lighter text */
 }
-.cta-section p {
-    color: #e9ecef;
+
+/* API Section */
+#api pre {
+    background-color: #111827; /* Darker code block */
+    color: #9CA3AF; /* Lighter code text */
+    padding: 1.5rem;
+    border-radius: 8px;
+    text-align: left;
+    overflow-x: auto;
+    border: 1px solid #374151;
+}
+#api code {
+    font-family: 'Menlo', 'Monaco', 'Courier New', monospace; /* Better mono font stack */
+    color: #A78BFA; /* Purple accent for code */
+}
+
+/* Footer */
+.landing-footer {
+    background-color: #111827; /* Darker footer */
+    color: #9CA3AF; /* Gray text */
+    padding: 4rem 0 2rem 0; /* Increased padding */
+    border-top: 1px solid #374151;
+}
+
+.footer-content {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+    max-width: 1100px;
+    margin: 0 auto 3rem auto;
+    padding: 0 2rem;
+    text-align: left;
+}
+
+.footer-section {
+    flex: 1;
+    min-width: 200px;
+    margin-bottom: 2rem;
+    padding: 0 1rem;
+}
+
+.footer-section h4 {
+    color: #E5E7EB; /* Lighter footer heading */
     margin-bottom: 1.5rem;
-}
-.cta-section .btn-secondary { /* Style the secondary button */
-    background-color: #fff;
-    color: #0056b3;
-    border-color: #fff;
-}
-.cta-section .btn-secondary:hover {
-    background-color: #f8f9fa;
-    color: #004085;
+    border-bottom: 1px solid #4B5563; /* Darker border */
+    padding-bottom: 0.8rem;
+    font-size: 1.2rem;
+    font-weight: 600;
 }
 
+.footer-section ul li {
+    margin-bottom: 0.8rem;
+}
 
-/* --- Responsiveness --- */
+.footer-section a {
+    color: #9CA3AF;
+}
+
+.footer-section a:hover {
+    color: #14B8A6; /* Teal hover */
+    text-decoration: underline;
+}
+
+.footer-bottom {
+    text-align: center;
+    border-top: 1px solid #374151;
+    padding-top: 2rem;
+    margin-top: 2rem;
+    font-size: 0.9rem;
+    color: #6B7280; /* Dimmer bottom text */
+}
+
+/* --- Media Queries --- */
+
 @media (max-width: 768px) {
-    .landing-hero h1 { font-size: 2.2rem; }
-    .landing-hero .subtitle { font-size: 1.1rem; }
-    .landing-section { padding: 2rem 1rem; }
-    .landing-section h2 { font-size: 1.8rem; }
-    .features-grid { grid-template-columns: 1fr; /* Stack features on smaller screens */ }
-    .main-header { flex-direction: column; gap: 0.5rem; }
-    .landing-nav { margin-top: 0.5rem; }
+    .landing-header {
+        padding: 0.6rem 0;
+    }
+    .navbar {
+        flex-direction: column;
+        align-items: center;
+        padding: 0 1rem;
+    }
+    .nav-links {
+        margin-top: 0.8rem;
+    }
+    .nav-links li {
+        margin-left: 0.8rem;
+        margin-right: 0.8rem;
+    }
+    .nav-links a {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.95rem;
+    }
+
+    .hero-content {
+        padding: 2.5rem 1.5rem;
+        margin-top: 100px; /* Adjust if mobile header is taller */
+    }
+    .hero-content h1 {
+        font-size: 2.5rem;
+    }
+     .hero-content p {
+        font-size: 1.1rem;
+    }
+    .cta-button {
+        padding: 0.8rem 1.8rem;
+        font-size: 1rem;
+    }
+
+     #about {
+        padding-top: calc(4rem + 100px); /* Adjust padding */
+    }
+    .content-section {
+        padding: 4rem 1.5rem;
+    }
+     .content-section h2 {
+        font-size: 2.2rem;
+    }
+
+    .footer-content {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .footer-section {
+        margin-bottom: 2rem;
+        width: 80%;
+    }
 }
 
-@media (max-width: 576px) {
-    .landing-hero { padding: 3rem 1rem; clip-path: none; /* Remove angled bottom on small screens */ }
-    .landing-hero h1 { font-size: 1.8rem; }
-    .landing-hero .subtitle { font-size: 1rem; }
-    .btn-hero { padding: 0.7rem 1.8rem; font-size: 1rem; }
-    .auth-form { padding: 1.5rem; }
+@media (max-width: 480px) {
+    body {
+        line-height: 1.6;
+    }
+    .nav-links {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+     .nav-links li {
+        margin: 0.3rem 0.5rem;
+    }
+     .hero-content h1 {
+        font-size: 2rem;
+    }
+     .hero-content p {
+        font-size: 1rem;
+    }
+     .content-section h2 {
+        font-size: 1.9rem;
+    }
+     .feature-item {
+         padding: 1.5rem;
+     }
+     .feature-item h3 {
+         font-size: 1.2rem;
+     }
+}
+
+
+/* --- Scroll-triggered Animations --- */
+.content-section {
+   opacity: 0;
+   transform: translateY(50px);
+   transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+}
+.content-section.visible {
+    opacity: 1;
+    transform: translateY(0);
 }

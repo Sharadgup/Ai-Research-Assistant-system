@@ -3,101 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to AI Research Assistant</title>
+    <title>Vision AI - Automated Solutions</title>
+    
+    <!-- Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Main Stylesheet -->
     <link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    
+    <!-- Add links to animation libraries (GSAP, Three.js, Lottie, etc.) here if needed -->
 </head>
 <body>
     <header class="landing-header">
-        <div class="logo">🤖 AI Research Assistant</div>
-        <nav class="landing-nav">
-            <a href="{{ url_for('login') }}" class="btn btn-outline">Login</a>
+        <nav class="navbar">
+            <div class="logo animated-logo">
+                <!-- Placeholder for animated logo -->
+                <a href="#home">VisionAI</a>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#home">Home</a></li>
+                <li><a href="#about">About</a></li>
+                <li><a href="#content">Content</a></li>
+                <li><a href="#api">API</a></li>
+                <li><a href="#project">Project</a></li>
+            </ul>
         </nav>
     </header>
 
     <main>
-        {# --- Hero Section --- #}
-        <section class="landing-hero">
+        <section id="home" class="hero-section">
+            <!-- Video Background -->
+            <div class="animated-video-background">
+                 <!-- Example using a local video file -->
+                 <video autoplay muted loop playsinline>
+                    <source src="{{ url_for('static', filename='video/landing_background.mp4') }}" type="video/mp4">
+                    Your browser does not support the video tag.
+                 </video>
+            </div>
+
+            <!-- Content Overlay -->
             <div class="hero-content">
-                <h1>Unlock Insights with AI-Powered Analysis</h1>
-                <p class="subtitle">Transform your text into structured reports, visualize data, and chat with an AI assistant tailored to your content.</p>
-                {# This button redirects to login via JavaScript #}
-                <button id="trySystemBtn" class="btn btn-primary btn-hero">🚀 Get Started</button>
-                <p class="hero-subtext">Login or Register to begin.</p>
+                <h1>Welcome to VisionAI</h1>
+                <p>Automating the future with intelligent vision.</p>
+                <a href="{{ url_for('login') }}" class="cta-button">Get Started</a>
             </div>
         </section>
 
-        {# --- Features Section --- #}
-        <section id="features" class="landing-section features-section">
-            <h2>Core Features</h2>
-            <div class="features-grid">
+        <section id="about" class="content-section">
+            <h2>About Us</h2>
+            <p>We specialize in creating cutting-edge AI solutions that leverage computer vision for automation across various industries.</p>
+            <!-- Add more detailed content -->
+        </section>
+
+        <section id="content" class="content-section alt-bg">
+            <h2>Content & Features</h2>
+            <div class="feature-grid">
                 <div class="feature-item">
-                    <div class="feature-icon">📄</div>
-                    <h3>Intelligent Reporting</h3>
-                    <p>Generate summaries, key findings, detailed analyses, sentiment scores, and keywords from your text data using advanced AI.</p>
+                    <h3>Feature 1</h3>
+                    <p>Description of feature 1 with potential hover effect.</p>
                 </div>
                 <div class="feature-item">
-                    <div class="feature-icon">📊</div>
-                    <h3>Data Visualization</h3>
-                    <p>Automatically create insightful charts visualizing keyword frequencies and sentiment distribution from the generated reports.</p>
+                    <h3>Feature 2</h3>
+                    <p>Description of feature 2 with potential hover effect.</p>
                 </div>
                 <div class="feature-item">
-                    <div class="feature-icon">💬</div>
-                    <h3>Contextual Chat</h3>
-                    <p>Engage in interactive conversations with the AI specifically about the content of your generated reports.</p>
-                </div>
-                 <div class="feature-item">
-                    <div class="feature-icon">💾</div>
-                    <h3>Persistent Storage</h3>
-                    <p>Your inputs, generated reports, and chat histories are securely saved in our database for your reference.</p>
+                    <h3>Feature 3</h3>
+                    <p>Description of feature 3 with potential hover effect.</p>
                 </div>
             </div>
         </section>
 
-        {# --- Technology/API Section --- #}
-        <section id="tech" class="landing-section tech-section">
-            <h2>Powered By Cutting-Edge Technology</h2>
-            <p>We leverage powerful APIs and robust technologies to deliver intelligent insights:</p>
-            <ul>
-                <li>✅ **Google Gemini API:** For state-of-the-art text analysis and generation.</li>
-                <li>✅ **MongoDB:** Provides flexible and scalable database storage.</li>
-                <li>✅ **Flask & Socket.IO:** Ensures a responsive and real-time web experience.</li>
-            </ul>
+        <section id="api" class="content-section">
+            <h2>API Details</h2>
+            <p>Integrate our powerful vision capabilities into your own applications with our robust API.</p>
+            <!-- Add API documentation links or details -->
+            <pre><code>// Example API usage
+vision.detect("image.jpg").then(results => {
+    console.log(results);
+});</code></pre>
         </section>
 
-         {# --- Call to Action --- #}
-         <section class="landing-section cta-section">
-             <h2>Ready to Get Started?</h2>
-             <p>Sign up or log in to begin transforming your text data.</p>
-              <button id="trySystemBtnBottom" class="btn btn-secondary">Login / Register</button>
-         </section>
-
+        <section id="project" class="content-section alt-bg">
+            <h2>Project Details</h2>
+            <p>Explore the specifics of our flagship automation project.</p>
+            <!-- Add project specifics, case studies, etc. -->
+        </section>
     </main>
 
-    <footer class="main-footer">
-        <p>© {{ now.year }} Your Company Name. All rights reserved.</p>
+    <footer class="landing-footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Quick Links</h4>
+                <ul>
+                    <li><a href="#home">Home</a></li>
+                    <li><a href="#about">About</a></li>
+                    <li><a href="#api">API</a></li>
+                     <li><a href="#project">Project</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Contact</h4>
+                <p>Email: info@visionai.example</p>
+                <p>Phone: 123-456-7890</p>
+            </div>
+            <div class="footer-section">
+                <h4>Follow Us</h4>
+                <!-- Add social media links/icons -->
+                <a href="#">LinkedIn</a> | <a href="#">Twitter</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 VisionAI. All rights reserved.</p>
+            <!-- Animated elements or effects can be added here -->
+        </div>
     </footer>
 
-    {# --- Inline JavaScript for Button Redirect --- #}
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const tryButton = document.getElementById('trySystemBtn');
-            const tryButtonBottom = document.getElementById('trySystemBtnBottom');
-            const loginUrl = "{{ url_for('login') }}"; // Get URL from Flask
-
-            function redirectToLogin() {
-                 console.log("Redirecting to login:", loginUrl);
-                 window.location.href = loginUrl;
-            }
-
-            if (tryButton) {
-                tryButton.addEventListener('click', redirectToLogin);
-            } else { console.error("'trySystemBtn' not found!"); }
-
-            if (tryButtonBottom) {
-                tryButtonBottom.addEventListener('click', redirectToLogin);
-            } else { console.warn("'trySystemBtnBottom' not found."); }
-        });
-    </script>
+    <script src="{{ url_for('static', filename='landing.js') }}"></script>
 </body>
 </html>
