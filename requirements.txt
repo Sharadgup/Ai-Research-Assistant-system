@@ -50,3 +50,4 @@ wsproto==1.2.0
 websocket-client==1.7.0
 pymongo==4.7.2
 Flask-Dance-7.1.0 oauthlib-3.2.2 requests-oauthlib-2.0.0 urlobject-2.4.3
+pymupdf-1.25.5

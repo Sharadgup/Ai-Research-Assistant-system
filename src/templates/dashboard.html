@@ -29,9 +29,9 @@
             <details class="sidebar-section">
                 <summary class="sidebar-section-title">⚙️ Services</summary>
                 <ul class="sidebar-submenu">
-                    {% for service in data.services %}
-                    <li><a href="#" data-content="service-{{ loop.index }}">{{ service }}</a></li>
-                    {% endfor %}
+                    {# ... other services ... #}
+                    <li><a href="{{ url_for('report_page') }}">Report Generator</a></li> {# Link to index.html #}
+                    <li><a href="{{ url_for('pdf_analyzer_page') }}">PDF Analyzer</a></li> {# *** NEW LINK *** #}
                 </ul>
             </details>
 
