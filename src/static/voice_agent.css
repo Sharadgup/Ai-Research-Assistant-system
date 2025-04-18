@@ -3,7 +3,7 @@
    ========================== */
 
    .voice-agent-container {
-    /* Inherits .agent-container */
+    /* Inherits .agent-container */ 
     text-align: center; /* Center content */
 }
 

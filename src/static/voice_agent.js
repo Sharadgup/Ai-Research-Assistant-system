@@ -350,7 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
         stopBtn.addEventListener('click', stopRecognition);
     } else { console.error("Stop Listening button not found!"); }
 
-    // Initial UI state setup
+    // Initial UI state setup   the
     initializeVoiceUI();
 
 }); // End DOMContentLoaded
