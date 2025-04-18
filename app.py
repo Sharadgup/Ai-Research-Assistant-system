@@ -82,6 +82,7 @@ education_chats_collection = None; healthcare_chats_collection = None;
 construction_agent_interactions_collection = None;
 pdf_analysis_collection = None
 pdf_chats_collection = None
+voice_conversations_collection = None # <-- NEW Voice Conversation Collection
 
 if not MONGO_URI or not DB_NAME: logging.critical("Missing MongoDB Config")
 else:
@@ -93,8 +94,8 @@ else:
         documentation_collection = db["documentation"]; chats_collection = db["chats"]; general_chats_collection = db["general_chats"]
         education_chats_collection = db["education_chats"]; healthcare_chats_collection = db["healthcare_chats"]
         construction_agent_interactions_collection = db["construction_agent_interactions"]
-        pdf_analysis_collection = db["pdf_analysis"]
-        pdf_chats_collection = db["pdf_chats"]
+        pdf_analysis_collection = db["pdf_analysis"]; pdf_chats_collection = db["pdf_chats"]
+        voice_conversations_collection = db["voice_conversations"] # <-- Assign voice collection
         logging.info("MongoDB Collections assigned.")
         # Ensure Indexes...
         try: registrations_collection.create_index("username", unique=True, sparse=True)
@@ -116,8 +117,10 @@ else:
         try: pdf_chats_collection.create_index("pdf_analysis_id")
         except Exception as idx_err: logging.warning(f"PDF Chat index warn: {idx_err}")
 
-    except Exception as e: logging.critical(f"MongoDB init error: {e}"); db = None
+        try: voice_conversations_collection.create_index("user_id") # <-- Add index for voice convos
+        except Exception as idx_err: logging.warning(f"Voice Convo index warn: {idx_err}")
 
+    except Exception as e: logging.critical(f"MongoDB init error: {e}"); db = None
 
 # --- SocketIO Initialization ---
 allowed_origins_list = ["http://127.0.0.1:5000", "http://localhost:5000", "https://5000-idx-ai-note-system-1744087101492.cluster-a3grjzek65cxex762e4mwrzl46.cloudworkstations.dev", "*"]
@@ -435,6 +438,15 @@ def upload_pdf(): # (Keep logic)
         return jsonify({"error": "Server error processing file."}), 500
     else: return jsonify({"error": "Invalid file type."}), 400
 
+# * NEW Route for Voice Agent Page *
+@app.route('/voice_agent')
+def voice_agent_page():
+    """Renders the dedicated page for the Voice AI Assistant."""
+    if not is_logged_in():
+        flash("Please log in to use the Voice AI agent.", "warning")
+        return redirect(url_for('login'))
+    return render_template('voice_agent.html', now=datetime.utcnow())
+# *************
 
 # --- SocketIO Event Handlers ---
 # (Keep all existing handlers: default namespace, /dashboard_chat, /pdf_chat)
@@ -567,6 +579,115 @@ def handle_pdf_chat_message(data): # (Keep detailed logging logic)
         emit('receive_pdf_chat_message', {'user': 'AI', 'text': ai_response_text}, room=sid, namespace='/pdf_chat')
     except Exception as e: logging.error(f"(SID:{sid}) Unexpected error in PDF chat processing for analysis {analysis_id}: {e}"); logging.error(traceback.format_exc()); emit('error', {'message': 'Server error during PDF chat.'}, room=sid, namespace='/pdf_chat')
     finally: emit('typing_indicator', {'isTyping': False}, room=sid, namespace='/pdf_chat'); logging.info(f"--- handle_pdf_chat_message END (SID:{sid}) ---")
+
+# * NEW SocketIO Handlers for Voice Chat *
+@socketio.on('connect', namespace='/voice_chat')
+def handle_voice_connect():
+    if not is_logged_in(): logging.warning(f"Unauth connect /voice_chat: {request.sid}"); return False
+    logging.info(f"User '{session.get('username')}' connected voice chat: {request.sid}")
+    # Optionally retrieve and send recent voice history?
+    # user_id = ObjectId(session['user_id'])
+    # convo = voice_conversations_collection.find_one({"user_id": user_id})
+    # if convo and convo.get("messages"):
+    #     emit('voice_history', {"messages": convo["messages"][-10:]}, room=request.sid) # Send last 10
+
+@socketio.on('disconnect', namespace='/voice_chat')
+def handle_voice_disconnect():
+    logging.info(f"User '{session.get('username', 'Unknown')}' disconnected voice chat: {request.sid}")
+
+@socketio.on('send_voice_text', namespace='/voice_chat')
+def handle_send_voice_text(data):
+    """Handles transcribed text from user, gets AI voice response, saves interaction."""
+    sid = request.sid
+    logging.debug(f"--- handle_send_voice_text START (SID:{sid}) ---")
+    if not is_logged_in(): emit('error', {'message': 'Auth required.'}, room=sid, namespace='/voice_chat'); return
+    if db is None or voice_conversations_collection is None or model is None:
+        emit('error', {'message': 'Voice service unavailable.'}, room=sid, namespace='/voice_chat'); return
+
+    username = session.get('username','Unknown'); user_id_str = session.get('user_id')
+    if not isinstance(data, dict): logging.warning(f"Invalid voice data from {username}"); return
+    user_transcript = data.get('text', '').strip()
+    user_lang = data.get('lang', 'en-US') # Get language detected by browser (optional)
+
+    if not user_transcript: logging.debug("Empty transcript received."); return
+    try: user_id = ObjectId(user_id_str) if user_id_str else None; assert user_id is not None
+    except: logging.error(f"Invalid user ID for voice chat: {user_id_str}"); emit('error', {'message': 'Session error.'}, room=sid, namespace='/voice_chat'); return
+
+    logging.info(f"Voice Chat from '{username}' (SID:{sid}, lang:{user_lang}): '{user_transcript[:50]}...'")
+
+    # --- 1. Save User Transcript ---
+    try:
+        user_msg_doc = {"role": "user", "text": user_transcript, "lang": user_lang, "timestamp": datetime.utcnow()}
+        update_result_user = voice_conversations_collection.update_one(
+            {"user_id": user_id},
+            {"$push": {"messages": user_msg_doc},
+             "$setOnInsert": {"user_id": user_id, "username": username, "start_timestamp": datetime.utcnow()}},
+            upsert=True
+        )
+        logging.info(f"Saved voice chat user msg for {username}. Result: {update_result_user.raw_result}")
+    except Exception as e: logging.error(f"Err save voice user msg: {e}")
+
+    # --- 2. Get AI Response ---
+    ai_response_text = "[AI Error processing voice input]"
+    try:
+        # Rebuild history (simple approach, similar to dashboard chat)
+        history = []
+        convo_doc = voice_conversations_collection.find_one({"user_id": user_id})
+        if convo_doc and "messages" in convo_doc:
+            for msg in convo_doc["messages"][-6:]: # Limit history
+                history.append({'role': ('model' if msg['role']=='AI' else msg['role']), 'parts': [msg['text']]})
+            logging.info(f"Rebuilt voice chat history ({len(history)} msgs) for {username}")
+
+        # Simple prompt - could be made more conversational
+        voice_prompt = f"User said: {user_transcript}\nRespond naturally:"
+        # If using history:
+        # You might need a more complex prompt that includes the history list correctly formatted
+
+        # Call Gemini (using history if built)
+        logging.info(f"Sending voice query to Gemini for {username}...")
+        current_chat_session = model.start_chat(history=history) # Start with history
+        response = current_chat_session.send_message(user_transcript) # Send only current transcript
+        logging.info(f"Received voice Gemini response for {username}.")
+
+        if response.candidates:
+            ai_response_text = response.text if hasattr(response, 'text') else "[AI format error]"
+        else:
+            ai_response_text = "[AI response blocked/empty]"
+            logging.error(f"Voice Chat AI blocked/empty. Feedback: {response.prompt_feedback if hasattr(response, 'prompt_feedback') else 'N/A'}")
+
+    except Exception as e:
+        logging.error(f"Error getting AI response for voice chat ({username}): {e}")
+        logging.error(traceback.format_exc())
+        ai_response_text = "[Server error processing request]"
+
+
+    # --- 3. Save AI Response ---
+    if not ai_response_text.startswith("[AI Err") and voice_conversations_collection is not None:
+        try:
+            # Respond in the same language user spoke if possible (simple pass-through for now)
+            # Advanced: Detect AI response lang or use translation API if needed
+            ai_lang = user_lang # Assume AI responds in same language for basic case
+            ai_msg_doc = {"role": "AI", "text": ai_response_text, "lang": ai_lang, "timestamp": datetime.utcnow()}
+            update_result_ai = voice_conversations_collection.update_one(
+                {"user_id": user_id},
+                {"$push": {"messages": ai_msg_doc}}
+            )
+            logging.info(f"Saved voice chat AI response for {username}. Result: {update_result_ai.raw_result}")
+        except Exception as e: logging.error(f"Err save voice AI msg: {e}")
+    else:
+        logging.warning(f"Skipping DB save for voice AI error: {ai_response_text}")
+
+
+    # --- 4. Emit AI Response back to Client ---
+    logging.info(f"Emitting 'receive_ai_voice_text' to {username} (SID:{sid}): '{ai_response_text[:50]}...'")
+    emit('receive_ai_voice_text', {
+        'user': 'AI',
+        'text': ai_response_text,
+        'lang': user_lang # Tell client which lang to speak in (based on user input lang)
+        }, room=sid, namespace='/voice_chat')
+
+    logging.debug(f"--- handle_send_voice_text END (SID:{sid}) ---")
+# ***************
 
 
 # --- Main Execution ---

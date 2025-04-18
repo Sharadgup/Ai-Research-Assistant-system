@@ -1,0 +1,112 @@
+/* ==========================
+   Voice Agent Page Styles
+   ========================== */
+
+   .voice-agent-container {
+    /* Inherits .agent-container */
+    text-align: center; /* Center content */
+}
+
+.voice-agent-container .agent-title {
+    color: #6f42c1; /* Bootstrap purple */
+}
+.voice-agent-container .agent-title i {
+    font-size: 1.6rem; /* Larger mic icon */
+}
+
+.voice-status-indicator {
+    margin: 1rem auto 1.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 20px; /* Pill shape */
+    font-weight: 500;
+    display: inline-block; /* Don't take full width */
+    min-width: 150px; /* Give it some base width */
+    transition: background-color 0.3s ease, color 0.3s ease;
+    border: 1px solid transparent;
+}
+
+/* Status styles */
+.voice-status-indicator.idle {
+    background-color: #e9ecef; /* Light grey */
+    border-color: #ced4da;
+    color: #495057;
+}
+.voice-status-indicator.listening {
+    background-color: #d1e7dd; /* Light green */
+    border-color: #badbcc;
+    color: #0f5132;
+    font-weight: bold;
+}
+.voice-status-indicator.processing {
+    background-color: #cff4fc; /* Light cyan */
+    border-color: #b6effb;
+    color: #055160;
+}
+.voice-status-indicator.speaking {
+    background-color: #cfe2ff; /* Light blue */
+    border-color: #b6d4fe;
+    color: #084298;
+}
+.voice-status-indicator.error,
+.voice-status-indicator.disconnected {
+    background-color: #f8d7da; /* Light red */
+    border-color: #f5c2c7;
+    color: #842029;
+    font-weight: bold;
+}
+
+.voice-controls {
+    margin-bottom: 2rem;
+}
+.voice-controls .btn-lg { /* Make buttons larger */
+    padding: 0.8rem 1.8rem;
+    font-size: 1.1rem;
+}
+.voice-controls .btn i {
+    margin-right: 0.6rem;
+}
+
+/* Specific button colors */
+#startVoiceBtn {
+    background-color: #198754;
+    border-color: #198754;
+}
+#startVoiceBtn:hover:not(:disabled) {
+     background-color: #157347;
+    border-color: #146c43;
+}
+#stopVoiceBtn {
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+#stopVoiceBtn:hover:not(:disabled) {
+    background-color: #bb2d3b;
+    border-color: #b02a37;
+}
+
+
+.voice-chat-log {
+    /* Inherits .chat-container */
+    text-align: left; /* Align text left within chat */
+    height: 350px; /* Adjust height as needed */
+    margin-top: 1.5rem;
+}
+.voice-chat-log h3 {
+    font-size: 1.1rem;
+    color: #495057;
+    text-align: center;
+    padding: 0.6rem;
+    margin: 0;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+}
+
+/* Use existing .chat-messages, .message styles */
+
+/* Error message specific to voice agent */
+#voiceError {
+    /* Inherits .error-message styles */
+    margin-top: 0.5rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}

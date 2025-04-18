@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Voice AI Assistant{% endblock %}
+
+{% block head_extra %}
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    {# Add specific CSS if needed #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='voice_agent.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="agent-container voice-agent-container">
+    <h2 class="agent-title"><i class="fas fa-microphone-alt"></i> Voice AI Assistant</h2>
+    <p class="agent-description">
+        Click "Start Listening" and speak your query. The assistant will respond verbally.
+        Ensure your microphone is enabled and allowed by the browser.
+    </p>
+     <div id="voiceStatus" class="voice-status-indicator idle">
+        Status: IDLE
+     </div>
+     <div id="voiceError" class="error-message" style="display: none;"></div>
+
+    <hr class="agent-divider">
+
+    <div class="voice-controls">
+        <button id="startVoiceBtn" class="btn btn-success btn-lg"><i class="fas fa-play"></i> Start Listening</button>
+        <button id="stopVoiceBtn" class="btn btn-danger btn-lg" style="display: none;"><i class="fas fa-stop"></i> Stop Listening</button>
+    </div>
+
+    {# Chat display area #}
+    <div class="chat-container voice-chat-log mt-4">
+         <h3>Conversation Log</h3>
+         <div id="voiceChatMessages" class="chat-messages">
+             <div class="message system">Click "Start Listening" to begin...</div>
+         </div>
+         {# Typing indicator - might be less relevant for pure voice #}
+         {# <div id="voiceTypingIndicator" class="typing-indicator" style="display: none;">
+             AI is processing...<span class="dot-flashing"></span>
+         </div> #}
+    </div>
+
+
+     {# Link back to dashboard #}
+     <p class="mt-4 text-center agent-back-link"><a href="{{ url_for('dashboard') }}">« Back to Dashboard</a></p>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+    {# Load Font Awesome if using icons #}
+    {# <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/js/all.min.js"></script> #}
+    {# Load specific JS for this page #}
+    <script type="module" src="{{ url_for('static', filename='voice_agent.js') }}"></script>
+{% endblock %}
