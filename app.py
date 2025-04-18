@@ -678,7 +678,7 @@ def handle_send_voice_text(data):
         logging.warning(f"Skipping DB save for voice AI error: {ai_response_text}")
 
 
-    # --- 4. Emit AI Response back to Client the  ---
+    # --- 4. Emit AI Response back to Client ---
     logging.info(f"Emitting 'receive_ai_voice_text' to {username} (SID:{sid}): '{ai_response_text[:50]}...'")
     emit('receive_ai_voice_text', {
         'user': 'AI',
