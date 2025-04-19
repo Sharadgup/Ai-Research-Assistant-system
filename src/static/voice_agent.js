@@ -1,356 +1,310 @@
-/**
- * Frontend Script for Voice AI Assistant Page
- */
-console.log("[Voice Agent JS] Script loaded.");
+// script.js (Combined & Corrected for Voice UI with Socket.IO)
+
+// Ensure the Socket.IO client library is included in your HTML:
+// <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("[Voice Agent JS] DOM Content Loaded.");
+    // --- Get DOM Elements ---
+    const micButton = document.getElementById('mic-button');
+    const micIcon = document.getElementById('mic-icon');
+    const statusMessage = document.getElementById('status-message');
+    const userChatArea = document.getElementById('user-chat-area');
+    const agentChatArea = document.getElementById('agent-chat-area');
+    const exitButton = document.getElementById('exit-button');
+    const dashboardButton = document.getElementById('dashboard-button');
 
-    // --- Check for Browser Support ---
+    // *** VERIFY ALL ELEMENTS EXIST ***
+    if (!micButton || !micIcon || !statusMessage || !userChatArea || !agentChatArea || !exitButton || !dashboardButton) {
+        console.error("FATAL ERROR: One or more required DOM elements (mic-button, mic-icon, status-message, user-chat-area, agent-chat-area, exit-button, dashboard-button) were not found. Please check your HTML IDs.");
+        // Display error to user if statusMessage exists
+        if (statusMessage) statusMessage.textContent = "UI Error: Elements missing.";
+        // Stop script execution if critical elements are missing
+        return;
+    }
+    console.log("All required DOM elements found.");
+
+    // --- Web Speech API Setup (with prefix check) ---
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const SpeechSynthesis = window.speechSynthesis;
 
+    // --- Check for browser support ---
     if (!SpeechRecognition) {
-        showVoiceError("Speech Recognition API is not supported in this browser. Please try Chrome or Edge.");
-        console.error("Speech Recognition not supported.");
-        // Disable buttons if API is missing
-        const startBtn = document.getElementById('startVoiceBtn');
-        if(startBtn) startBtn.disabled = true;
-        return; // Stop script execution
+        console.error("Web Speech API (SpeechRecognition/webkitSpeechRecognition) not supported.");
+        statusMessage.textContent = "Voice input not supported by browser.";
+        micButton.disabled = true;
+        micButton.style.cursor = 'not-allowed';
+        micButton.title = "Voice input not supported";
+        micButton.style.backgroundColor = '#ccc';
+        return; // Stop script
+    } else {
+         console.log("SpeechRecognition API supported.");
     }
-     if (!SpeechSynthesis) {
-        showVoiceError("Speech Synthesis API is not supported in this browser.");
-        console.error("Speech Synthesis not supported.");
-        // Allow recognition, but voice output won't work
+    if (!SpeechSynthesis) {
+        console.warn("Speech Synthesis API not supported. Responses will not be spoken.");
+    } else {
+         console.log("SpeechSynthesis API supported.");
     }
 
-    // --- Elements ---
-    const startBtn = document.getElementById('startVoiceBtn');
-    const stopBtn = document.getElementById('stopVoiceBtn');
-    const statusDiv = document.getElementById('voiceStatus');
-    const errorDiv = document.getElementById('voiceError');
-    const messagesDiv = document.getElementById('voiceChatMessages');
-    // const typingIndicator = document.getElementById('voiceTypingIndicator'); // Optional
+    // --- Socket.IO Connection ---
+    console.log("Attempting to connect to /voice_chat namespace...");
+    // const socket = io('http://127.0.0.1:5001/voice_chat'); // Use full URL if needed
+    const socket = io('/voice_chat'); // Assumes same host/port
 
-    // --- State ---
+    // --- Socket.IO Event Listeners ---
+    socket.on('connect', () => {
+        console.log('Socket connected to /voice_chat! SID:', socket.id);
+        statusMessage.textContent = "Connected. Click mic.";
+        micButton.disabled = false; // Enable mic button on connect
+        micButton.style.cursor = 'pointer';
+    });
+
+    socket.on('connect_error', (err) => {
+        console.error('Socket Connection Error to /voice_chat:', err.message);
+        statusMessage.textContent = "Connection Error.";
+        micButton.disabled = true; // Disable on error
+        micButton.style.cursor = 'not-allowed';
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('Socket disconnected from /voice_chat:', reason);
+        statusMessage.textContent = "Disconnected.";
+        micButton.disabled = true; // Disable on disconnect
+        micButton.style.cursor = 'not-allowed';
+    });
+
+    socket.on('connection_ack', (data) => { // Optional listener
+         console.log('Backend ACK:', data.message);
+    });
+
+    // Listener for receiving AI responses
+    socket.on('receive_ai_voice_text', (data) => {
+        console.log("Received 'receive_ai_voice_text':", data);
+        if (data && data.text) {
+             displayMessage(data.text, 'agent');
+             speakText(data.text, data.lang); // Pass language
+        } else {
+             console.warn("Received voice response event, but data is missing text:", data);
+             displayMessage("[Received empty/invalid AI response]", 'agent');
+        }
+        // Re-enable mic after processing if interaction still active
+        if (interactionActive) {
+            micButton.classList.remove('processing');
+            micButton.disabled = false;
+            statusMessage.textContent = "Click mic to speak";
+        }
+    });
+
+    // Listener for backend errors
+    socket.on('error', (data) => {
+        console.error('Received error event from backend:', data.message);
+        statusMessage.textContent = `Error: ${data.message}`;
+        // Reset button state if needed
+        if (interactionActive) {
+             micButton.classList.remove('processing');
+             micButton.disabled = false;
+        }
+    });
+
+    // --- Web Speech API Variables ---
     let recognition;
-    let isListening = false;
-    let isSpeaking = false;
-    let stopRequested = false;
+    let isRecording = false;
     let finalTranscript = '';
-    let currentUtterance = null; // To track ongoing speech
-    let voiceSocket; // Socket for this namespace
+    let interactionActive = true;
 
-    // --- Setup Recognition Instance ---
-    function setupRecognition() {
-        if (recognition) { // Stop previous instance if exists
-            try { recognition.stop(); } catch(e){}
-        }
-        recognition = new SpeechRecognition();
-        recognition.continuous = false; // Process after user stops speaking
-        recognition.interimResults = true; // Show results as they come in (optional)
-        recognition.lang = 'en-US'; // Default language - can be changed
+    // --- Initialize Recognition Function ---
+    const initializeRecognition = () => {
+        console.log("Initializing SpeechRecognition...");
+        if (recognition) { try { recognition.stop(); } catch (e) {console.warn("Error stopping previous recog:", e);} }
 
-        recognition.onstart = () => {
-            console.log("Recognition started");
-            isListening = true;
-            stopRequested = false;
-            updateStatus("LISTENING...", "listening");
-            if(startBtn) startBtn.style.display = 'none';
-            if(stopBtn) stopBtn.style.display = 'inline-block';
-        };
-
-        recognition.onresult = (event) => {
-            let interimTranscript = '';
-            finalTranscript = ''; // Reset final transcript for this recognition cycle
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript;
-                } else {
-                    interimTranscript += event.results[i][0].transcript;
-                }
-            }
-            // Display interim results if desired (optional)
-            // console.log("Interim:", interimTranscript);
-            // if (interimTranscript) updateStatus(`Listening... (Heard: ${interimTranscript})`, "listening");
-
-            if (finalTranscript) {
-                console.log("Final transcript received:", finalTranscript);
-                // Don't stop listening here, let onend handle it
-            }
-        };
-
-        recognition.onerror = (event) => {
-            console.error("Recognition Error:", event.error);
-            let errorMsg = `Speech recognition error: ${event.error}`;
-            if (event.error === 'no-speech') {
-                errorMsg = "No speech detected. Please try again.";
-            } else if (event.error === 'audio-capture') {
-                errorMsg = "Microphone error. Ensure it's connected and allowed.";
-            } else if (event.error === 'not-allowed') {
-                errorMsg = "Permission to use microphone denied. Please allow access.";
-            } else if (event.error === 'network') {
-                errorMsg = "Network error during speech recognition.";
-            }
-             else if (event.error === 'aborted') {
-                 console.log("Recognition aborted, likely intentional."); // Often happens when stop() is called
-                 errorMsg = null; // Don't show error for manual stop
-             }
-
-            if (errorMsg) showVoiceError(errorMsg);
-            isListening = false;
-            updateStatus("ERROR", "error");
-            if(startBtn) startBtn.style.display = 'inline-block';
-            if(stopBtn) stopBtn.style.display = 'none';
-        };
-
-        recognition.onend = () => {
-            console.log("Recognition ended.");
-            isListening = false;
-            if(startBtn) startBtn.style.display = 'inline-block';
-            if(stopBtn) stopBtn.style.display = 'none';
-
-            if (finalTranscript && !stopRequested) {
-                console.log("Processing final transcript:", finalTranscript);
-                updateStatus("PROCESSING...", "processing");
-                appendVoiceMessage('User', finalTranscript); // Display user message
-                sendTranscriptToServer(finalTranscript, recognition.lang); // Send to backend
-            } else if (stopRequested) {
-                console.log("Stopped manually, not processing.");
-                updateStatus("IDLE", "idle"); // Return to idle
-            } else {
-                 console.log("Recognition ended without final transcript (e.g., no speech).");
-                 // No error shown here if 'no-speech' handled in onerror
-                 if (statusDiv && !statusDiv.classList.contains('error')) {
-                     updateStatus("IDLE", "idle");
-                 }
-            }
-            finalTranscript = ''; // Clear for next time
-        };
-    }
-
-
-    // --- Initialize Socket.IO (/voice_chat) ---
-    try {
-        if (typeof io === 'undefined') throw new Error("Socket.IO client library not found.");
-        voiceSocket = io('/voice_chat'); // Connect to voice namespace
-        setupVoiceSocketListeners();
-        updateStatus("CONNECTING...", "idle");
-    } catch (e) {
-        console.error("Voice Socket.IO Init Error:", e);
-        showVoiceError("Could not connect to voice chat service.");
-        updateStatus("ERROR", "error");
-        if(startBtn) startBtn.disabled = true;
-    }
-
-    // --- SocketIO Listeners (/voice_chat) ---
-    function setupVoiceSocketListeners() {
-        if (!voiceSocket) return;
-
-        voiceSocket.on('connect', () => {
-            console.log('VOICE CHAT: Connected.', voiceSocket.id);
-            hideVoiceError();
-            updateStatus("IDLE", "idle"); // Ready state
-            if(startBtn) startBtn.disabled = false;
-            appendVoiceMessage('System', 'Voice Assistant Ready.');
-        });
-        voiceSocket.on('disconnect', (reason) => {
-            console.log(`VOICE CHAT: Disconnected: ${reason}`);
-            showVoiceError("Voice chat disconnected.");
-            updateStatus("DISCONNECTED", "error");
-            if(startBtn) startBtn.disabled = true; // Disable on disconnect
-             if(stopBtn) stopBtn.style.display = 'none';
-             isListening = false; stopRecognition(); // Ensure recognition stops
-        });
-        voiceSocket.on('connect_error', (err) => {
-            console.error(`VOICE CHAT: Conn error: ${err.message}`);
-            showVoiceError(`Voice chat connection failed: ${err.message}`);
-            updateStatus("ERROR", "error");
-            if(startBtn) startBtn.disabled = true;
-        });
-        voiceSocket.on('receive_ai_voice_text', (data) => { // Listen for AI response
-            console.log('VOICE CHAT: AI Response received:', data);
-            if (data && data.user === 'AI' && typeof data.text === 'string') {
-                appendVoiceMessage(data.user, data.text);
-                speakText(data.text, data.lang); // Speak the response
-            } else {
-                appendVoiceMessage('System', '[Invalid AI response format]', true);
-                restartListeningIfNeeded(); // Still try to restart listening
-            }
-        });
-         voiceSocket.on('error', (data) => { // Errors from backend emit
-             console.error('VOICE CHAT: Server Error:', data.message);
-             showVoiceError(`Server error: ${data.message || 'Unknown'}`);
-             updateStatus("ERROR", "error");
-             restartListeningIfNeeded(); // Try to restart listening even after server error
-         });
-         // Optional: Handle typing indicator if server sends it
-         // voiceSocket.on('typing_indicator', (data) => { ... });
-    }
-
-    // --- Speech Synthesis ---
-    function speakText(text, lang = 'en-US') {
-        if (!SpeechSynthesis) {
-            console.warn("Speech Synthesis not supported, cannot speak.");
-            restartListeningIfNeeded(); // Restart listening even if can't speak
-            return;
-        }
-        if (isSpeaking && currentUtterance) {
-             console.log("Cancelling previous speech.");
-             SpeechSynthesis.cancel(); // Stop any ongoing speech
-        }
-
-        const utterance = new SpeechSynthesisUtterance(text);
-        // Optionally find and set a specific voice
-        // const voices = SpeechSynthesis.getVoices();
-        // utterance.voice = voices.find(v => v.lang === lang) || voices.find(v => v.lang.startsWith(lang.split('-')[0])) || voices.find(v => v.default);
-        utterance.lang = lang; // Set language for the utterance
-        utterance.rate = 1.0; // Adjust rate as needed
-        utterance.pitch = 1.0; // Adjust pitch as needed
-
-        utterance.onstart = () => {
-            console.log("SpeechSynthesis started.");
-            isSpeaking = true;
-            updateStatus("SPEAKING...", "speaking");
-             stopRecognition(); // Make sure recognition is stopped while speaking
-        };
-        utterance.onend = () => {
-            console.log("SpeechSynthesis finished.");
-            isSpeaking = false;
-            currentUtterance = null;
-            // Restart listening ONLY if stop wasn't requested
-            restartListeningIfNeeded();
-        };
-        utterance.onerror = (event) => {
-            console.error("SpeechSynthesis Error:", event.error);
-            showVoiceError(`Speech synthesis error: ${event.error}`);
-            isSpeaking = false;
-            currentUtterance = null;
-             // Restart listening even if speech failed
-            restartListeningIfNeeded();
-        };
-
-        currentUtterance = utterance; // Track current speech
-        SpeechSynthesis.speak(utterance);
-    }
-
-    // --- Control Functions ---
-    function startListening() {
-        if (isListening) {
-            console.log("Already listening.");
-            return;
-        }
-         if (isSpeaking) {
-            console.log("Cannot start listening while speaking.");
-            // Maybe queue it up? For now, just ignore.
-            return;
-        }
-        hideVoiceError();
-        setupRecognition(); // Re-create instance to clear previous state
         try {
-            console.log("Calling recognition.start()");
-            recognition.start();
-        } catch (e) {
-            console.error("Error starting recognition:", e);
-            showVoiceError("Could not start microphone. Check permissions.");
-            updateStatus("ERROR", "error");
+            recognition = new SpeechRecognition(); // Use the checked variable
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US'; // Default language
+
+            // --- Assign Event Handlers ---
+            recognition.onstart = () => {
+                console.log("Recording started");
+                isRecording = true;
+                finalTranscript = '';
+                micButton.classList.add('recording');
+                micIcon.classList.remove('fa-microphone');
+                micIcon.classList.add('fa-stop');
+                statusMessage.textContent = "Listening...";
+                clearPlaceholders();
+            };
+
+            recognition.onresult = (event) => {
+                if (!interactionActive) return;
+                let interimTranscript = '';
+                finalTranscript = ''; // Reset on each result event, build up final
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    const transcriptPart = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcriptPart + ' ';
+                    } else {
+                        interimTranscript += transcriptPart;
+                    }
+                }
+                 // Optional: displayInterimMessage(interimTranscript || finalTranscript || "...");
+            };
+
+            recognition.onend = () => {
+                console.log("Recognition ended.");
+                isRecording = false; // Update state
+                micButton.classList.remove('recording'); // Always remove class
+                micIcon.classList.remove('fa-stop');
+                micIcon.classList.add('fa-microphone');
+
+                // Decide what to do based on whether interaction is active
+                if (!interactionActive) {
+                    statusMessage.textContent = "Interaction stopped. Click mic.";
+                    micButton.disabled = false; // Make sure it's enabled
+                    return;
+                }
+
+                finalTranscript = finalTranscript.trim(); // Clean final transcript
+
+                if (finalTranscript) {
+                    statusMessage.textContent = "Processing...";
+                    micButton.classList.add('processing');
+                    micButton.disabled = true; // Disable WHILE processing
+                    console.log("Mic button DISABLED for processing in onend.");
+                    displayMessage(finalTranscript, 'user');
+                    // *** SEND TRANSCRIPT VIA SOCKET.IO ***
+                    sendTranscriptToBackendViaSocket(finalTranscript, recognition.lang);
+                } else {
+                    statusMessage.textContent = "No speech detected. Click mic.";
+                    micButton.disabled = false; // Enable if nothing detected
+                    console.log("Mic button RE-ENABLED in onend (no speech detected).");
+                }
+            };
+
+            recognition.onerror = (event) => {
+                 console.error("Speech recognition error:", event.error, event.message);
+                 let errorMsg = "Error: " + event.error;
+                 if (event.error === 'no-speech') errorMsg = "No speech detected.";
+                 if (event.error === 'audio-capture') errorMsg = "Microphone error.";
+                 if (event.error === 'not-allowed') errorMsg = "Permission denied.";
+                 if (event.error === 'aborted') errorMsg = "Listening stopped.";
+
+                 if (interactionActive) statusMessage.textContent = errorMsg;
+
+                 // Reset state completely on error
+                 isRecording = false;
+                 micButton.classList.remove('recording', 'processing');
+                 micIcon.classList.remove('fa-stop');
+                 micIcon.classList.add('fa-microphone');
+                 if (interactionActive) {
+                      micButton.disabled = false; // Re-enable button
+                      console.log("Mic button RE-ENABLED on error.");
+                 }
+            };
+            console.log("SpeechRecognition initialized successfully.");
+        } catch (initError) {
+             console.error("FATAL: Error initializing SpeechRecognition instance:", initError);
+             statusMessage.textContent = "Error initializing voice input.";
+             if(micButton) micButton.disabled = true; // Disable if init fails
         }
     }
 
-    function stopRecognition() {
-        if (recognition && isListening) {
-            console.log("Calling recognition.stop()");
-            stopRequested = true; // Set flag to prevent processing transcript on end
-            recognition.stop(); // This will trigger the 'onend' event
-            isListening = false;
+    // --- Initialize on Load ---
+    initializeRecognition();
+
+    // --- UI Event Listeners ---
+    micButton.addEventListener('click', () => {
+        console.log("Mic button CLICKED. Current state: isRecording=", isRecording, "socket.connected=", socket.connected, "micButton.disabled=", micButton.disabled);
+        if (micButton.disabled) { console.warn("Mic button is disabled, click ignored."); return; }
+        if (!socket.connected) { statusMessage.textContent = "Connecting..."; console.warn("Mic clicked but socket not connected."); return; }
+        if (!interactionActive) { interactionActive = true; hideExitMessage(); }
+
+        if (isRecording) {
+            try { console.log("Attempting to stop recognition..."); recognition.stop(); }
+            catch(e) { console.error("Error stopping recognition:", e); /* Manual reset? */ }
         } else {
-            console.log("Recognition not active, no need to stop.");
-        }
-        // Ensure UI reflects stopped state immediately
-        if (startBtn) startBtn.style.display = 'inline-block';
-        if (stopBtn) stopBtn.style.display = 'none';
-        if (!isSpeaking) updateStatus("IDLE", "idle"); // Go to idle if not speaking
-    }
-
-    function sendTranscriptToServer(transcript, lang) {
-        if (voiceSocket && voiceSocket.connected) {
-            console.log(`Sending transcript to server (lang: ${lang}):`, transcript);
-            try {
-                voiceSocket.emit('send_voice_text', { text: transcript, lang: lang });
-            } catch(e) {
-                console.error("Error emitting voice text:", e);
-                showVoiceError("Failed to send voice data to server.");
-                updateStatus("ERROR", "error");
-                restartListeningIfNeeded(); // Still try to restart
+            if (SpeechSynthesis && SpeechSynthesis.speaking) { SpeechSynthesis.cancel(); }
+            try { console.log("Attempting to start recognition..."); recognition.start(); }
+            catch (error) {
+                console.error("Error starting recognition:", error);
+                if (error.name === 'InvalidStateError') { console.warn("Recognition in invalid state. Re-initializing..."); initializeRecognition(); statusMessage.textContent = "Voice input reset. Try again."; }
+                else { statusMessage.textContent = "Could not start. Mic busy?"; }
+                micButton.disabled = false; // Ensure button usable
             }
-        } else {
-            console.error("Cannot send transcript: Voice socket not connected.");
-            showVoiceError("Not connected to voice chat server.");
-             updateStatus("DISCONNECTED", "error");
         }
-    }
+    });
 
-    function restartListeningIfNeeded() {
-        // Only restart if the user hasn't manually stopped
-        if (!stopRequested && !isListening && !isSpeaking) {
-             console.log("Speech ended, restarting recognition loop...");
-             // Add a small delay before restarting
-             setTimeout(() => {
-                startListening();
-             }, 250); // 250ms delay
-        } else if (stopRequested) {
-             console.log("Stop requested, not restarting listening.");
-             updateStatus("IDLE", "idle");
-        } else {
-             console.log("Not restarting listening (isListening or isSpeaking is true, or stop requested).");
+    exitButton.addEventListener('click', () => {
+        console.log("Exit clicked");
+        interactionActive = false;
+        if (isRecording) { recognition.abort(); } // Abort immediately
+        if (SpeechSynthesis && SpeechSynthesis.speaking) { SpeechSynthesis.cancel(); }
+        statusMessage.textContent = "Interaction stopped. Click mic to restart.";
+        // Reset button state visually and functionally
+        micButton.classList.remove('recording', 'processing');
+        micIcon.classList.remove('fa-stop');
+        micIcon.classList.add('fa-microphone');
+        micButton.disabled = false; // Allow restarting
+        isRecording = false; // Ensure state flag is reset
+        // clearChatAreas(); // Optional
+    });
+
+    dashboardButton.addEventListener('click', () => {
+        console.log("Back to Dashboard clicked - Implement navigation");
+        alert("Dashboard navigation not implemented in this example.");
+        // window.location.href = '/dashboard'; // Example redirect
+    });
+
+    // --- Helper Functions ---
+    function sendTranscriptToBackendViaSocket(transcript, language) {
+        if (!socket.connected) {
+             console.error("Socket not connected when trying to send.");
+             statusMessage.textContent = "Not connected.";
+             micButton.classList.remove('processing'); // Reset button state
+             micButton.disabled = false;
+             return;
         }
+        const payload = { text: transcript, lang: language || 'en-US' };
+        console.log("Emitting 'send_voice_text' via SocketIO:", payload);
+        socket.emit('send_voice_text', payload);
     }
 
-    // --- UI Helpers ---
-    function updateStatus(text, statusClass) {
-        if (!statusDiv) return;
-        statusDiv.textContent = `Status: ${text}`;
-        // Remove previous status classes
-        statusDiv.classList.remove('idle', 'listening', 'processing', 'speaking', 'error', 'disconnected');
-        // Add the new class
-        if (statusClass) {
-            statusDiv.classList.add(statusClass);
-        }
+    function displayMessage(text, sender) {
+        if (!text || !interactionActive) return;
+        const chatArea = (sender === 'user') ? userChatArea : agentChatArea;
+        const messageClass = (sender === 'user') ? 'user-message' : 'agent-message';
+        const placeholder = chatArea.querySelector('.placeholder-text');
+        if (placeholder && placeholder.style.display !== 'none') { placeholder.style.display = 'none'; }
+
+        const messageBubble = document.createElement('div');
+        messageBubble.classList.add('message-bubble', messageClass);
+        messageBubble.textContent = text;
+        chatArea.appendChild(messageBubble);
+        chatArea.scrollTop = chatArea.scrollHeight;
     }
 
-    function appendVoiceMessage(user, text, isSystem = false) {
-        // Similar to dashboard/report chat append, uses 'voiceChatMessages' div
-         if (!messagesDiv) return;
-         const el = document.createElement('div'); el.classList.add('message');
-         if(isSystem){el.classList.add('system'); el.innerHTML=text;}
-         else {el.classList.add(user.toLowerCase()==='ai'?'ai':'user'); const sText=text.replace(/</g,"<").replace(/>/g,">"); el.textContent=sText;}
-         messagesDiv.appendChild(el); scrollToBottom(messagesDiv);
-     }
+    function speakText(text, lang = 'en-US') {
+         if (!SpeechSynthesis || !text || !interactionActive) { console.log("Skipping speech synthesis."); return; }
+         if (SpeechSynthesis.speaking || SpeechSynthesis.pending) { SpeechSynthesis.cancel(); }
 
-    function showVoiceError(message) { if(errorDiv) { errorDiv.textContent = message; errorDiv.style.display = 'block';} else { console.error("Voice Error Div not found:", message); } }
-    function hideVoiceError() { if(errorDiv) { errorDiv.style.display = 'none'; errorDiv.textContent = ''; } }
-    function scrollToBottom(element) { if(element) { element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' }); } } // Use smooth scroll
+         const utterance = new SpeechSynthesisUtterance(text);
+         utterance.lang = lang; // Set language
+         // utterance.voice = findVoiceForLang(lang); // Optional: Find specific voice
+         utterance.onerror = (event) => console.error("Speech synthesis error:", event.error);
+         utterance.onend = () => console.log("Finished speaking response.");
 
-
-    // --- Initial Setup ---
-    function initializeVoiceUI() {
-        console.log("[Voice Agent JS] Initializing UI...");
-        hideVoiceError();
-        if(startBtn) startBtn.disabled = true; // Wait for socket connect
-        if(stopBtn) stopBtn.style.display = 'none';
-        if(messagesDiv) messagesDiv.innerHTML = '<div class="message system">Initializing connection...</div>'; // Clear log
-        // Status set by socket connect listener
+         setTimeout(() => { if (interactionActive) SpeechSynthesis.speak(utterance); }, 100);
     }
 
-    // --- Attach Button Listeners ---
-    if (startBtn) {
-        startBtn.addEventListener('click', startListening);
-    } else { console.error("Start Listening button not found!"); }
-    if (stopBtn) {
-        stopBtn.addEventListener('click', stopRecognition);
-    } else { console.error("Stop Listening button not found!"); }
-
-    // Initial UI state setup   the
-    initializeVoiceUI();
+    function clearPlaceholders() {
+        const placeholders = document.querySelectorAll('.placeholder-text');
+        placeholders.forEach(p => p.style.display = 'none');
+    }
+    function hideExitMessage() {
+         if (statusMessage.textContent.includes("Interaction stopped")) { statusMessage.textContent = "Click mic to start"; }
+    }
+    function clearChatAreas() {
+         userChatArea.innerHTML = '<p class="placeholder-text" style="display: block;">User chat cleared.</p>';
+         agentChatArea.innerHTML = '<p class="placeholder-text" style="display: block;">Agent chat cleared.</p>';
+    }
 
 }); // End DOMContentLoaded
