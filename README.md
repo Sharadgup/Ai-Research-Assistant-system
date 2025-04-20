@@ -1,4 +1,3 @@
-Okay, here is a comprehensive README file tailored to your Flask application, incorporating explanations, step-by-step flows, emojis, and a conceptual visualization.
 
 ```markdown
 # ✨ AI Note System & Multi-Agent Platform 📝🤖🗣️
@@ -35,28 +34,69 @@ This Flask-based web application provides a suite of tools powered by Google's G
 
 This diagram illustrates the general interaction flow:
 
-```mermaid
-graph LR
-    A[User Browser] <-->|HTTP/WebSocket| B(Flask Server);
-    B -->|User Auth/Data| C{MongoDB Atlas};
-    B -->|Prompts/Queries| D[Google Gemini API];
-    B -->|PDF Upload| E[Server Storage];
-    E -->|Text Extraction| B;
-    C -->|Chat History/PDF Text| B;
-    D -->|AI Responses| B;
-    B -->|Rendered Pages/JSON/Socket Events| A;
+Diagram 1: Overall System Architecture & Request Flow
+  graph TD
+    %% Define Styles (Optional)
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef database fill:#ccf,stroke:#66a;
+    classDef api fill:#cfc,stroke:#6a6;
+    classDef storage fill:#fcc,stroke:#a66;
+    classDef user fill:#e6f2ff,stroke:#66a3ff;
+    classDef flask fill:#fff0b3,stroke:#cca300;
 
-    subgraph User Interaction
-        A
+    %% Nodes (Labels enclosed in double quotes, using \n for newlines)
+    A[User's Browser]
+    B("Flask Application Server\napp.py")
+    C{{"MongoDB Atlas\nDatabase"}}
+    D[Google Gemini API]
+    E["Server File System\n./uploads/"]
+    F{"Authentication Module\n(Login, Register, OAuth)"}
+    G{"SocketIO Interface\n(Real-time Comms)"}
+    H{"Routing & Controllers\n(@app.route)"}
+    I{"Templating Engine\n(Jinja2)"}
+    J{"Business Logic\n(PDF Parsing, Prompt Eng.)"}
+
+    %% Subgraph for Flask Internals
+    subgraph Flask Server Internals
+        direction LR
+        H --> F
+        H --> I
+        H --> J
+        H --> G
     end
 
-    subgraph Backend Services
-        B
-        C
-        D
-        E
-    end
-```
+    %% Connections
+    A -- "HTTP Request (GET /dashboard)" --> B
+    B -- "Route Match" --> H
+    H -- "Check Auth" --> F
+    F -- "Session Valid?" --> H
+    H -- "Render Template" --> I
+    I -- "Needs Data (e.g., username)" --> H
+    H -- "Fetch User Data" --> C
+    C -- "User Document" --> H
+    I -- "HTML Content" --> B
+    B -- "HTTP Response (Rendered Page)" --> A
+
+    A -- "WebSocket Connect (/dashboard_chat)" --> G
+    G -- "Handle Connection/Messages" --> J
+    J -- "Prepare Prompt/History" --> D
+    J -- "Fetch/Save Chat History" --> C
+    D -- "AI Response" --> J
+    J -- "Format Response" --> G
+    G -- "Emit 'receive_message'" --> A
+
+    H -- "Handles /upload_pdf POST" --> J
+    J -- "Save File" --> E
+    J -- "Extract Text (PyMuPDF)" --> J
+    J -- "Save Metadata" --> C
+
+    %% Apply Classes using the 'class' keyword
+    class A user;
+    class B,F,G,H,I,J flask;
+    class C database;
+    class D api;
+    class E storage;
+
 
 ## ⚙️ Setup and Installation
 
