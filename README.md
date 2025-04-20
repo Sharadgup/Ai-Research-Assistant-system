@@ -36,6 +36,23 @@ This diagram illustrates the general interaction flow:
 
 Diagram 1: Overall System Architecture & Request Flow
   
+![Screenshot (224)](https://github.com/user-attachments/assets/b298ba58-35ba-40df-aa1d-b462924760c0)
+
+Diagram 2: Authentication Flow (Password & Google OAuth)
+
+![Screenshot (225)](https://github.com/user-attachments/assets/d7ad95b3-6111-4ce5-97a5-b9897e0b1950)
+
+Diagram 3: PDF Upload and Chat Interaction Workflow
+
+![Screenshot (226)](https://github.com/user-attachments/assets/500b2e5a-a565-4a50-b624-ed9579d5c22f)
+
+Diagram 4: Multilingual Voice Assistant Interaction Flow
+
+![Screenshot (227)](https://github.com/user-attachments/assets/de1fe470-acae-4c78-9ed0-f01c8a5935c7)
+
+Diagram 5: Data Flow for Specific Agent (e.g., Construction)
+
+![Screenshot (228)](https://github.com/user-attachments/assets/8e2b68c2-9ea7-4f38-9e6c-caad6db736a1)
 
 
 ## ⚙️ Setup and Installation
