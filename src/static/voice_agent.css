@@ -59,7 +59,7 @@ body {
     border-radius: 5px;
     cursor: pointer;
     background-color: #6c757d;
-    color: white;
+    color: rgba(232, 250, 181, 0.877);
     font-size: 0.9em;
     transition: background-color 0.2s ease;
 }
@@ -217,6 +217,26 @@ body {
     align-self: flex-start; /* Align agent messages to the left */
     margin-right: auto;
     border-bottom-left-radius: 5px; /* Small tail */
+}
+
+/* Style for the new button on the main page */
+.history-button {
+    padding: 8px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    background-color: #17a2b8; /* Teal color */
+    color: white;
+    font-size: 0.9em;
+    text-decoration: none; /* Remove underline from link */
+    display: inline-flex; /* Align icon and text */
+    align-items: center;
+    gap: 5px; /* Space between icon and text */
+    transition: background-color 0.2s ease;
+}
+.history-button:hover {
+    background-color: #138496;
+    color: white; /* Keep text color on hover */
 }
 
 /* Footer Styling */

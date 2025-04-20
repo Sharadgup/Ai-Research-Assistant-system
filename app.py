@@ -446,7 +446,10 @@ def voice_agent_page():
         flash("Please log in to use the Voice AI agent.", "warning")
         return redirect(url_for('login'))
     return render_template('voice_agent.html', now=datetime.utcnow())
+
+
 # *************
+
 
 # --- SocketIO Event Handlers ---
 # (Keep all existing handlers: default namespace, /dashboard_chat, /pdf_chat)
