@@ -600,117 +600,222 @@ def handle_voice_disconnect():
     username = session.get('username', 'Unknown')
     logging.info(f"User '{username}' disconnected from '/voice_chat' namespace. SID: {request.sid}")
 
+
 @socketio.on('send_voice_text', namespace='/voice_chat')
 def handle_send_voice_text(data):
     """
-    Handles transcribed text received ONLY on the /voice_chat namespace.
-    Processes with Gemini, saves, and emits response back on the SAME namespace.
+    Handles transcribed text in MULTIPLE LANGUAGES (e.g., Hindi, English, German...).
+    Instructs Gemini based on detected language and requests response in the SAME language.
+    Saves language codes and interaction to MongoDB.
     """
     sid = request.sid
-    logging.info(f"--- Received 'send_voice_text' on '/voice_chat' (SID:{sid}) ---")
+    # Add language to log message
+    user_lang_from_payload = data.get('lang', 'en-US') # Get lang early for logging
+    logging.info(f"--- Received 'send_voice_text' on /voice_chat (SID:{sid}, Lang:{user_lang_from_payload}) ---")
 
     # 1. Validation and Setup
-    if not is_logged_in():
-        logging.warning(f"Auth error for 'send_voice_text' (SID: {sid})")
-        emit('error', {'message': 'Authentication required.'}, room=sid, namespace='/voice_chat')
-        return
-    if db is None or voice_conversations_collection is None or model is None:
-        logging.error(f"Service unavailable for 'send_voice_text' (SID: {sid})")
-        emit('error', {'message': 'Core service unavailable.'}, room=sid, namespace='/voice_chat')
-        return
+    if not is_logged_in(): log_and_emit_error('Auth required.', sid); return
+    if db is None or voice_conversations_collection is None: log_and_emit_error('DB service unavailable.', sid); return
+    if model is None: log_and_emit_error('AI service unavailable.', sid); return
 
     username = session.get('username','Unknown_User'); user_id_str = session.get('user_id')
-    if not isinstance(data, dict):
-        logging.warning(f"Invalid data format for 'send_voice_text' from {username} (SID:{sid})")
-        emit('error', {'message': 'Invalid data format.'}, room=sid, namespace='/voice_chat')
-        return
+    if not isinstance(data, dict): logging.warning(f"Invalid data format from {username} (SID:{sid})"); return
     user_transcript = data.get('text', '').strip()
-    user_lang = data.get('lang', 'en-US')
+    # *** Use the language code sent from frontend ***
+    user_lang = user_lang_from_payload # Assign to user_lang variable
 
-    if not user_transcript:
-        logging.debug(f"Empty transcript received from {username} (SID:{sid}). Skipping."); return
+    if not user_transcript: logging.debug(f"Empty transcript from {username} (SID:{sid}). Skipping."); return
     try: user_id = ObjectId(user_id_str)
-    except Exception as e:
-        logging.error(f"Invalid User ID '{user_id_str}' for {username} (SID:{sid}): {e}")
-        emit('error', {'message': 'Invalid session identifier.'}, room=sid, namespace='/voice_chat'); return
+    except Exception as e: log_and_emit_error(f"Invalid session identifier format: {e}", sid); return
 
-    logging.info(f"Processing voice transcript from '{username}' (SID:{sid}): '{user_transcript[:60]}...'")
+    # Log received language clearly
+    logging.info(f"Processing transcript from '{username}' (SID:{sid}, Detected Lang:{user_lang}): '{user_transcript[:60]}...'")
 
-    # Prepare message data
+    # --- Prepare message data - include language ---
     user_msg_doc = {"role": "user", "text": user_transcript, "lang": user_lang}
-    ai_msg_doc = {"role": "AI", "text": "[AI Error: Processing failed]", "lang": user_lang}
+    # Default error message for AI doc
+    ai_response_text = "[AI Error: Processing failed]"
+    # *** Assume AI response language matches user initially ***
+    # This code tells the frontend TTS which language to *try* to use
+    ai_lang = user_lang
+    ai_msg_doc = {"role": "AI", "text": ai_response_text, "lang": ai_lang}
 
-    # 2. Get AI Response (Using previous corrected prompting logic)
-    ai_response_text = "[AI Error processing voice input]"
+    # 2. Call Gemini API & Process Response (with MULTILINGUAL instruction)
     try:
-        # --- Build History (Same as before) ---
+        logging.debug(f"Attempting Gemini call for SID {sid} (Target Lang: {user_lang})...")
+
+        # --- Build History (Optional, keep it concise) ---
         history = []
-        # Add System Instruction/Context as needed...
-        # Fetch DB history...
-        convo_doc = voice_conversations_collection.find_one({"user_id": user_id}, {"messages": {"$slice": -6}})
-        # (Build history list...)
+        try:
+            convo_doc = voice_conversations_collection.find_one({"user_id": user_id}, {"messages": {"$slice": -4}}) # Limit history
+            if convo_doc and "messages" in convo_doc:
+                 for msg in convo_doc["messages"]:
+                     if isinstance(msg, dict) and "role" in msg and "text" in msg:
+                          # Use language from history if available for context, otherwise default
+                          msg_lang = msg.get('lang', 'en-US')
+                          # Prepend lang to historical part for clarity? (Optional)
+                          # history_text = f"({msg_lang}): {msg['text']}"
+                          history_text = msg['text']
+                          history.append({'role': ('model' if msg['role']=='AI' else msg['role']), 'parts': [history_text]})
+                 logging.info(f"Built history ({len(history)} messages) for {username} (SID:{sid})")
+        except Exception as hist_err:
+            logging.error(f"Error building history for SID {sid}: {hist_err}", exc_info=True)
+            history = [] # Start fresh if history fails
 
-        # --- Construct Prompt for this Turn (Same as before) ---
-        prompt_for_this_turn = f"..." # Use the prompt that worked best previously
+        # --- Construct Multilingual Prompt ---
+        # Explicitly tell Gemini the input language AND the desired output language.
+        # Use clear language names if codes are ambiguous, or stick to codes if Gemini handles them well.
+        # Example mapping (expand as needed):
+        language_map = {
+            'en-US': 'English', 'en-GB': 'English',
+            'hi-IN': 'Hindi',
+            'de-DE': 'German',
+            'fr-FR': 'French',
+            'es-ES': 'Spanish', 'es-MX': 'Spanish',
+            'zh-CN': 'Mandarin Chinese', 'zh-TW': 'Mandarin Chinese',
+            'ja-JP': 'Japanese',
+            'ko-KR': 'Korean',
+            # Add more mappings
+        }
+        # Get a human-readable language name for the prompt, default to code if not mapped
+        language_name = language_map.get(user_lang, user_lang)
 
-        # --- Call Gemini API (generate_content or chat.send_message) ---
-        logging.info(f"Calling Gemini for {username} (SID:{sid})")
-        # response = model.generate_content(...) or chat_session.send_message(...)
-        # (Process response, check for blocks, get ai_response_text)
-        # Example placeholder if Gemini call is complex:
-        # ai_response_text = f"AI processed: {user_transcript}" # Replace with actual call
+        multilingual_prompt_text = f"""
+        **Role:** You are a multilingual voice assistant.
+        **Context:** The user is speaking in '{language_name}' (language code: {user_lang}).
+        **Task:** Respond DIRECTLY and conversationally IN THE SAME LANGUAGE ('{language_name}') to the user's input below.
+        **Input ({language_name}):** "{user_transcript}"
+        **Constraints:** Do NOT start with acknowledgements like "Okay, I understand..." or "I received...". Do NOT add filler like "How can I help?". Directly provide the answer/response in {language_name}.
+        **Your Direct Response (in {language_name}):**
+        """ # Note: Using language_name in the prompt might be more robust than just the code.
 
-        # Simulate Gemini call for testing focus on SocketIO:
-        logging.debug(f"SIMULATING Gemini call for SID {sid}")
-        import time; time.sleep(0.5) # Simulate delay
-        if "hello" in user_transcript.lower():
-            ai_response_text = "Hello there! This is the VOICE agent."
-        elif "test" in user_transcript.lower():
-            ai_response_text = "Voice agent test successful."
+        # Prepare context for generate_content (history + final prompt)
+        context_list = history
+        context_list.append({'role': 'user', 'parts': [multilingual_prompt_text]})
+
+        logging.debug(f"Sending context (length {len(context_list)}) to Gemini for SID {sid} requesting language {language_name}.")
+        response = model.generate_content(context_list) # Use generate_content
+
+        # --- Process Response ---
+        logging.info(f"Received Gemini response for SID {sid}.")
+        log_gemini_response_details(response, sid) # Log details
+
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+             block_reason = response.prompt_feedback.block_reason
+             ai_response_text = f"[AI response blocked: {block_reason}]"
+             logging.warning(f"Gemini response BLOCKED (Lang: {user_lang}) for SID {sid}. Reason: {block_reason}")
+        elif response.candidates:
+            try:
+                ai_response_text = response.text
+                if not ai_response_text:
+                     finish_reason = response.candidates[0].finish_reason.name if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
+                     ai_response_text = f"[AI returned empty text (Lang: {user_lang}). Finish: {finish_reason}]"
+                     logging.warning(f"Gemini returned empty text (Lang: {user_lang}) for SID {sid}. Finish: {finish_reason}")
+                else:
+                     # Success! Assume response language is correct per instruction.
+                     ai_lang = user_lang # Keep the language we requested
+            except (AttributeError, ValueError, IndexError) as e:
+                 ai_response_text = "[AI response format error]"
+                 logging.error(f"Error extracting text (Lang: {user_lang}) from Gemini candidates for SID {sid}: {e}")
         else:
-            ai_response_text = f"Voice agent heard: {user_transcript}"
-        logging.debug(f"SIMULATED AI Response: {ai_response_text}")
-        # End Simulation
+             ai_response_text = "[AI returned no candidates]"
+             logging.warning(f"Gemini returned no candidates (Lang: {user_lang}) for SID {sid}.")
 
     except Exception as e:
-        logging.error(f"Error during Gemini API call for {username} (SID:{sid}): {e}", exc_info=True)
+        logging.error(f"CRITICAL ERROR during Gemini API call/processing (Lang: {user_lang}) for SID {sid}: {e}", exc_info=True)
         ai_response_text = "[Server error during AI processing]"
+        # Keep ai_lang as user_lang even on error
 
-    # Update the AI message doc
+    # Update AI message doc with final text and determined language
     ai_msg_doc["text"] = ai_response_text
-    ai_msg_doc["lang"] = user_lang
+    ai_msg_doc["lang"] = ai_lang # Use the determined language
 
-    # 3. Save BOTH messages to DB (AFTER getting response)
-    # (Keep the robust DB saving logic from the previous answer, including logging)
+    # 3. Save Conversation Turn to MongoDB (including language fields)
+    if voice_conversations_collection is not None:
+        try:
+            # ... (DB saving logic using update_one with $push as before) ...
+            # Ensure user_msg_doc and ai_msg_doc (with 'lang') are pushed
+            current_time = datetime.utcnow()
+            user_msg_doc["timestamp"] = current_time
+            ai_msg_doc["timestamp"] = current_time
+            logging.debug(f"Saving turn for user {user_id} (Lang: {user_lang} -> {ai_lang})")
+            update_result = voice_conversations_collection.update_one(
+                 {"user_id": user_id},
+                 {"$push": {"messages": {"$each": [user_msg_doc, ai_msg_doc]}},
+                 "$setOnInsert": {"user_id": user_id, "username": username, "start_timestamp": current_time}},
+                 upsert=True
+            )
+            log_db_update_result(update_result, username, sid)
+        except Exception as e:
+            logging.error(f"Error saving multilingual conversation to MongoDB (SID:{sid}): {e}", exc_info=True)
+    else:
+        logging.warning(f"MongoDB collection unavailable. Skipping conversation save for SID:{sid}.")
+
+    # 4. Emit AI Response back to Client (including language code)
+    response_payload = {
+        'user': 'AI',
+        'text': ai_response_text,
+        'lang': ai_lang # *** Send the correct language code back ***
+    }
     try:
-        current_time = datetime.utcnow()
-        user_msg_doc["timestamp"] = current_time
-        ai_msg_doc["timestamp"] = current_time
-        # (Perform update_one operation...)
-        logging.debug(f"Attempting to save conversation turn for {username} (SID:{sid}).")
-        # ... DB save ...
-        logging.debug(f"DB Save attempted for {username} (SID:{sid}).") # Log after attempt
+        logging.info(f"Emitting 'receive_ai_voice_text' to SID {sid} (Payload Lang: {ai_lang})")
+        emit( 'receive_ai_voice_text', response_payload, room=sid, namespace='/voice_chat' )
+        logging.info(f"Successfully called emit for SID {sid}.")
     except Exception as e:
-        logging.error(f"DB Save failed for {username} (SID:{sid}): {e}", exc_info=True)
+         logging.error(f"CRITICAL ERROR emitting response (Lang: {ai_lang}) to SID {sid}: {e}", exc_info=True)
 
-    # 4. Emit AI Response back SPECIFICALLY on /voice_chat namespace
+    logging.info(f"--- Finished handling 'send_voice_text' (Lang: {user_lang}) for SID {sid} ---")
+
+
+# --- Helper function for logging Gemini response ---
+def log_gemini_response_details(response, sid):
+    """Logs details of the Gemini response object."""
+    logging.debug(f"--- Gemini Response Details (SID:{sid}) ---")
     try:
-        logging.info(f"Emitting 'receive_ai_voice_text' on '/voice_chat' to SID {sid}: '{ai_response_text[:60]}...'")
-        emit(
-            'receive_ai_voice_text', # The specific event name frontend listens for
-            {
-                'user': 'AI',
-                'text': ai_response_text,
-                'lang': ai_msg_doc["lang"]
-            },
-            room=sid,             # Send only to the originating client
-            namespace='/voice_chat' # Explicitly specify the correct namespace
-        )
-        logging.debug(f"Successfully emitted 'receive_ai_voice_text' to SID {sid}")
-    except Exception as e:
-         logging.error(f"Error emitting 'receive_ai_voice_text' to {username} (SID:{sid}): {e}", exc_info=True)
+        logging.debug(f"Response Object Type: {type(response)}")
+        if hasattr(response, 'candidates') and response.candidates:
+             logging.debug(f"Candidates Count: {len(response.candidates)}")
+             for i, candidate in enumerate(response.candidates):
+                 logging.debug(f"  Candidate[{i}]:")
+                 if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
+                      logging.debug(f"    Content Parts: {str(candidate.content.parts)[:200]}...") # Log snippet
+                 else: logging.debug(f"    Content: No parts or empty content")
+                 if hasattr(candidate, 'finish_reason'): logging.debug(f"    Finish Reason: {candidate.finish_reason.name}")
+                 else: logging.debug(f"    Finish Reason: N/A")
+                 if hasattr(candidate, 'safety_ratings'): logging.debug(f"    Safety Ratings: {candidate.safety_ratings}")
+        else: logging.debug("Candidates: None or empty list.")
 
-    logging.info(f"--- Handled 'send_voice_text' on '/voice_chat' END (SID:{sid}) ---")
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+             logging.debug(f"Prompt Feedback: {response.prompt_feedback}")
+             if response.prompt_feedback.block_reason: logging.warning(f"*** PROMPT BLOCKED (in details)! Reason: {response.prompt_feedback.block_reason} ***")
+        else: logging.debug("Prompt Feedback: Not available or empty.")
+
+        if hasattr(response, 'text'): logging.debug(f"Text Attribute: '{str(response.text)[:200]}...'")
+        else: logging.debug("Text Attribute: Does not exist.")
+    except Exception as log_err: logging.error(f"Error occurred while logging response details for SID {sid}: {log_err}")
+    logging.debug(f"--- End Gemini Response Details (SID:{sid}) ---")
+
+# --- Helper function for logging DB result ---
+def log_db_update_result(update_result, username, sid):
+    """Logs details of the MongoDB update_one result."""
+    try:
+        logging.debug(f"DB Update Result for {username} (SID:{sid}): Matched={update_result.matched_count}, Modified={update_result.modified_count}, UpsertedId={update_result.upserted_id}, Ack={update_result.acknowledged}")
+        if update_result.acknowledged:
+            if update_result.upserted_id: logging.info(f"DB: INSERTED new doc for {username}. ID: {update_result.upserted_id}")
+            elif update_result.modified_count > 0: logging.info(f"DB: UPDATED existing doc for {username}.")
+            elif update_result.matched_count == 1 and update_result.modified_count == 0: logging.warning(f"DB: MATCHED doc for {username} but MODIFIED 0. Check 'messages' field type!")
+            elif update_result.matched_count == 0 and not update_result.upserted_id: logging.error(f"DB ERROR for {username}: Matched 0 and no upsert ID. Upsert failed?")
+        else: logging.error(f"DB ERROR for {username}: Update command was NOT acknowledged by server.")
+    except Exception as log_db_err: logging.error(f"Error logging DB update result for SID {sid}: {log_db_err}")
+
+# --- Helper function for emitting errors ---
+def log_and_emit_error(message, sid):
+    """Logs an error and emits it back to the client."""
+    logging.error(f"Error for SID {sid}: {message}")
+    try:
+        emit('error', {'message': message}, room=sid, namespace='/voice_chat')
+    except Exception as e:
+         logging.error(f"Failed to emit error '{message}' to SID {sid}: {e}", exc_info=True)
 
 # --- END of SocketIO Handlers for Voice Chat ---
 
