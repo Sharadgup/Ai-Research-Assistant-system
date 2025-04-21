@@ -174,7 +174,7 @@
     cursor: pointer;
     transition: all 0.3s ease; /* Catch-all transition */
     text-decoration: none;
-    width: 100%;
+    width: 100%; /* Default width for buttons like primary */
     box-sizing: border-box;
     position: relative; /* For potential pseudo-elements */
     overflow: hidden; /* For effects */
@@ -209,26 +209,39 @@
 
 
 /* --- Google Button Hover --- */
+/* MODIFIED FOR SMALLER SIZE AND CENTERING */
 .btn-google {
     background-color: #FFFFFF;
     color: #374151;
     border: 1px solid #D1D5DB;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    /* --- Start Modifications --- */
+    width: auto;          /* Override width: 100% from .btn */
+    display: inline-flex; /* Ensure it behaves like inline for text-align */
+    padding: 8px 18px;   /* Reduced padding for smaller size */
+    font-size: 0.9rem;    /* Reduced font size */
+    /* --- End Modifications --- */
 }
 
 .btn-google svg {
-    margin-right: 12px;
+    /* --- Start Modifications --- */
+    margin-right: 8px;    /* Slightly reduced margin */
+    width: 18px;          /* Explicit size */
+    height: 18px;         /* Explicit size */
+     /* --- End Modifications --- */
 }
 
 .btn-google:hover {
     background-color: #f7f8fa;
     border-color: #9CA3AF;
-    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
-    transform: translateY(-3px);
+    /* --- Start Modifications --- */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08); /* Slightly reduced hover shadow */
+    transform: translateY(-2px); /* Slightly reduced lift */
+    /* --- End Modifications --- */
 }
 .btn-google:active {
      transform: translateY(-1px);
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
 }
 
 
@@ -256,8 +269,12 @@
     text-transform: uppercase; /* Uppercase OR */
 }
 
+/* Container for Social Buttons - MODIFIED FOR CENTERING */
 .social-login-buttons {
     margin-bottom: 25px; /* Space below button */
+    /* --- Start Modifications --- */
+    text-align: center; /* Center inline/inline-block/inline-flex children */
+    /* --- End Modifications --- */
 }
 
 
@@ -378,12 +395,20 @@
         padding: 12px 15px;
         font-size: 0.95rem;
     }
+    /* Responsive adjustment for base button padding */
     .btn {
-        padding: 12px 20px;
-        font-size: 0.95rem;
+        padding: 12px 20px; /* Smaller padding on small screens */
+        font-size: 0.95rem; /* Slightly smaller font on small screens */
+    }
+    /* Responsive adjustment for Google button padding */
+    .btn-google {
+        padding: 7px 16px; /* Even smaller padding on small screens */
+        font-size: 0.85rem; /* Smaller font */
     }
      .btn-google svg {
-        margin-right: 10px;
+        margin-right: 6px; /* Adjust SVG margin */
+        width: 16px;
+        height: 16px;
      }
       .register-link {
         font-size: 0.85rem;

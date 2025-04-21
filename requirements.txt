@@ -51,3 +51,16 @@ websocket-client==1.7.0
 pymongo==4.7.2
 Flask-Dance-7.1.0 oauthlib-3.2.2 requests-oauthlib-2.0.0 urlobject-2.4.3
 pymupdf-1.25.5
+Pillow-11.2.1
+defusedxml-0.7.1
+fonttools-4.57.0
+fpdf2-2.8.2
+narwhals-1.35.0
+numpy-2.2.5
+packaging-25.0
+pandas-2.2.3
+plotly-6.0.1
+python-dateutil-2.9.0.post0
+pytz-2025.2
+six-1.17.0
+tzdata-2025.2

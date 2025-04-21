@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}Data Cleaner & Analyzer{% endblock %}
+
+{% block head_extra %}
+    <!-- Tabulator CSS -->
+    <link href="https://unpkg.com/tabulator-tables@5.5.0/dist/css/tabulator_bootstrap5.min.css" rel="stylesheet">
+    <!-- Or link your local file -->
+    <!-- <link href="{{ url_for('static', filename='vendor/tabulator/css/tabulator_bootstrap5.min.css') }}" rel="stylesheet"> -->
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='data_analyzer.css') }}">
+    <style>
+        /* Add specific styles for cleaner page if needed */
+        #data-preview-table { height: 400px; border: 1px solid #ccc; margin-bottom: 1rem;}
+        .panel { border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 20px; background-color: #f9f9f9;}
+        .panel h5 { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 15px;}
+        #analysis-results, #insights-output { white-space: pre-wrap; background-color: #e9ecef; padding: 10px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace;}
+        .loading-overlay { /* Basic loading overlay */
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.7); z-index: 10;
+            display: flex; align-items: center; justify-content: center;
+        }
+         .action-group { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px dashed #ccc; }
+         .action-group:last-child { border-bottom: none; }
+    </style>
+{% endblock %}
+
+
+{% block content %}
+<div class="container-fluid mt-4"> {# Use fluid for wider layout #}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+         <h1><i class="fas fa-wrench"></i> Data Cleaner & Analyzer</h1>
+         <a href="{{ url_for('analysis_history') }}" class="btn btn-outline-secondary"><i class="fas fa-history"></i> View History</a>
+    </div>
+
+    {# Hidden field to store upload_id for JS #}
+    <input type="hidden" id="uploadId" value="{{ upload_data._id }}">
+
+    <!-- Basic Info -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">File Information</h5>
+            <p><strong>Filename:</strong> {{ upload_data.original_filename }}</p>
+            <p><strong>Uploaded:</strong> {{ upload_data.upload_timestamp.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+            <p><strong>Current Dimensions:</strong> <span id="rowCount">{{ upload_data.row_count }}</span> rows, <span id="colCount">{{ upload_data.col_count }}</span> columns</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <!-- Data Preview -->
+            <div class="panel position-relative">
+                 <h5><i class="fas fa-table"></i> Data Preview (First 100 Rows)</h5>
+                 <div id="data-preview-table"></div>
+                 <div id="previewLoading" class="loading-overlay" style="display: none;">
+                     <span class="spinner-border text-primary" role="status"></span><span class="ms-2">Loading Preview...</span>
+                 </div>
+            </div>
+
+             <!-- Analysis Results -->
+            <div class="panel position-relative">
+                 <h5><i class="fas fa-calculator"></i> Analysis Results</h5>
+                 <div id="analysis-results">No analysis run yet.</div>
+                 <div id="analysisLoading" class="loading-overlay" style="display: none;">
+                     <span class="spinner-border text-primary" role="status"></span><span class="ms-2">Running Analysis...</span>
+                 </div>
+            </div>
+
+             <!-- Visualization Output -->
+            <div class="panel position-relative">
+                 <h5><i class="fas fa-chart-bar"></i> Visualization</h5>
+                 <div id="plot-output" style="min-height: 300px;">Select options and click "Generate Plot".</div>
+                 <div id="plotLoading" class="loading-overlay" style="display: none;">
+                     <span class="spinner-border text-primary" role="status"></span><span class="ms-2">Generating Plot...</span>
+                 </div>
+            </div>
+
+             <!-- AI Insights -->
+            <div class="panel position-relative">
+                 <h5><i class="fas fa-lightbulb"></i> AI Generated Insights</h5>
+                 <button id="generateInsightsBtn" class="btn btn-info btn-sm mb-2"><i class="fas fa-magic"></i> Generate Insights</button>
+                 <div id="insights-output">Click button to generate insights using Gemini.</div>
+                  <div id="insightsLoading" class="loading-overlay" style="display: none;">
+                     <span class="spinner-border text-primary" role="status"></span><span class="ms-2">Generating Insights...</span>
+                 </div>
+            </div>
+
+        </div>
+
+        <div class="col-lg-4">
+            <!-- Column Info -->
+            <div class="panel">
+                 <h5><i class="fas fa-info-circle"></i> Column Information</h5>
+                 <div id="column-info-list" style="max-height: 200px; overflow-y: auto;">
+                     {# Populated by JS #}
+                 </div>
+            </div>
+
+             <!-- Recommendations -->
+            <div class="panel">
+                 <h5><i class="fas fa-exclamation-triangle"></i> Cleaning Recommendations</h5>
+                 {% if recommendations %}
+                 <ul class="list-group list-group-flush">
+                     {% for rec in recommendations %}
+                         <li class="list-group-item list-group-item-warning">{{ rec }}</li>
+                     {% endfor %}
+                 </ul>
+                 {% else %}
+                 <p>No specific recommendations generated.</p>
+                 {% endif %}
+            </div>
+
+
+             <!-- Cleaning Actions -->
+             <div class="panel position-relative">
+                 <h5><i class="fas fa-broom"></i> Cleaning Actions</h5>
+                 <div id="cleaningLoading" class="loading-overlay" style="display: none;">
+                     <span class="spinner-border text-primary" role="status"></span><span class="ms-2">Applying Action...</span>
+                 </div>
+
+                 <div class="mb-3">
+                    <label for="selectColumnCleaning" class="form-label">Select Column:</label>
+                    <select id="selectColumnCleaning" class="form-select">
+                         <option value="" selected disabled>-- Select Column --</option>
+                         {# Options added by JS #}
+                    </select>
+                 </div>
+
+                 {# --- Null Value Handling --- #}
+                 <div class="action-group">
+                     <h6>Handle Null Values</h6>
+                     <div class="input-group input-group-sm mb-2">
+                         <select id="nullActionMethod" class="form-select">
+                             <option value="drop_row">Drop Rows with Nulls</option>
+                             <option value="drop_col">Drop Column</option>
+                             <option value="mean">Fill with Mean</option>
+                             <option value="median">Fill with Median</option>
+                             <option value="mode">Fill with Mode</option>
+                             <option value="custom">Fill with Custom Value</option>
+                         </select>
+                          <button class="btn btn-outline-secondary apply-cleaning-btn" data-action="handle_nulls" type="button">Apply</button>
+                     </div>
+                     <input type="text" id="nullCustomValue" class="form-control form-control-sm" placeholder="Custom value if selected" style="display: none;">
+                 </div>
+
+                 {# --- Convert Type --- #}
+                 <div class="action-group">
+                     <h6>Convert Data Type</h6>
+                      <div class="input-group input-group-sm mb-2">
+                         <select id="convertTypeNew" class="form-select">
+                             <option value="object">Object (String)</option>
+                             <option value="int64">Integer</option>
+                             <option value="float64">Float</option>
+                             <option value="category">Category</option>
+                             <option value="datetime64[ns]">DateTime</option> {# Requires specific format #}
+                             <option value="boolean">Boolean</option>
+                         </select>
+                          <button class="btn btn-outline-secondary apply-cleaning-btn" data-action="convert_type" type="button">Apply</button>
+                     </div>
+                 </div>
+
+                 {# --- Remove Duplicates (Applies to whole dataset) --- #}
+                 <div class="action-group">
+                     <h6>Remove Duplicate Rows</h6>
+                     <button class="btn btn-outline-danger btn-sm apply-cleaning-btn" data-action="remove_duplicates" data-column="N/A">Apply to Entire Dataset</button>
+                     <small class="text-muted d-block">Removes rows where all values are identical.</small>
+                 </div>
+
+                 {# --- Add Outlier Handling, Normalization etc. here --- #}
+
+                 <div id="cleaning-feedback" class="mt-2 small"></div>
+
+             </div>
+
+             <!-- Analysis Triggers -->
+             <div class="panel">
+                <h5><i class="fas fa-play-circle"></i> Run Analysis</h5>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-success analysis-btn" data-analysis-type="descriptive_stats">Descriptive Statistics</button>
+                    <button class="btn btn-outline-success analysis-btn" data-analysis-type="correlation">Correlation Matrix</button>
+                    {# Add buttons for other analysis types #}
+                </div>
+             </div>
+
+             <!-- Visualization Controls -->
+             <div class="panel">
+                 <h5><i class="fas fa-palette"></i> Visualization Controls</h5>
+                 <div class="mb-2">
+                    <label for="selectChartType" class="form-label">Chart Type:</label>
+                    <select id="selectChartType" class="form-select form-select-sm">
+                         <option value="histogram">Histogram</option>
+                         <option value="scatter">Scatter Plot</option>
+                         <option value="bar">Bar Chart</option>
+                         <option value="heatmap">Heatmap (Requires Correlation)</option>
+                         {# Add Line, Pie, Box etc. #}
+                    </select>
+                 </div>
+                  <div class="mb-2">
+                    <label for="selectXAxis" class="form-label">X-Axis:</label>
+                    <select id="selectXAxis" class="form-select form-select-sm">
+                         <option value="" selected disabled>-- Select Column --</option>
+                         {# Options added by JS #}
+                    </select>
+                 </div>
+                  <div class="mb-2 viz-control-y"> {# Hide for histogram etc via JS #}
+                    <label for="selectYAxis" class="form-label">Y-Axis:</label>
+                    <select id="selectYAxis" class="form-select form-select-sm">
+                         <option value="" selected disabled>-- Select Column --</option>
+                         {# Options added by JS #}
+                    </select>
+                 </div>
+                 <div class="mb-2 viz-control-color"> {# Hide for heatmap etc via JS #}
+                    <label for="selectColor" class="form-label">Color Grouping (Optional):</label>
+                    <select id="selectColor" class="form-select form-select-sm">
+                         <option value="">-- None --</option>
+                         {# Options added by JS #}
+                    </select>
+                 </div>
+                 <button id="generatePlotBtn" class="btn btn-success"><i class="fas fa-paint-brush"></i> Generate Plot</button>
+             </div>
+
+
+            <!-- Export Actions -->
+            <div class="panel">
+                <h5><i class="fas fa-file-download"></i> Export</h5>
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('download_cleaned_data', upload_id=upload_data._id, fileformat='csv') }}" class="btn btn-outline-primary">Download Cleaned (.csv)</a>
+                    <a href="{{ url_for('download_cleaned_data', upload_id=upload_data._id, fileformat='xlsx') }}" class="btn btn-outline-primary">Download Cleaned (.xlsx)</a>
+                    <a href="{{ url_for('download_pdf_report', upload_id=upload_data._id) }}" class="btn btn-outline-danger">Download PDF Report</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{# Embed data for JavaScript #}
+<script id="previewDataJson" type="application/json">{{ preview_data | tojson }}</script>
+<script id="columnInfoJson" type="application/json">{{ column_info | tojson }}</script>
+
+{% endblock %}
+
+{% block scripts_extra %}
+    <!-- Tabulator JS -->
+    <script type="text/javascript" src="https://unpkg.com/tabulator-tables@5.5.0/dist/js/tabulator.min.js"></script>
+    <!-- Or link your local file -->
+    <!-- <script src="{{ url_for('static', filename='vendor/tabulator/js/tabulator.min.js') }}"></script> -->
+
+    <!-- Plotly JS -->
+    <script src='https://cdn.plot.ly/plotly-latest.min.js'></script>
+
+    <script src="{{ url_for('static', filename='data_cleaner.js') }}" defer></script>
+{% endblock %}
