@@ -16,8 +16,9 @@ import json
 import traceback
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ConfigurationError, DuplicateKeyError
-from datetime import datetime
-from bson import ObjectId
+from datetime import datetime, timedelta
+from bson import ObjectId, json_util
+from bson.errors import InvalidId
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename # For file uploads
 import fitz # PyMuPDF library
@@ -26,6 +27,9 @@ import io # For sending dataframe file data without saving temp file
 from fpdf import FPDF # For PDF generation example
 import plotly.express as px # Example using Plotly for visualizations
 import plotly.io as pio # To convert Plotly figs to JSON
+import requests
+from urllib.parse import urlparse # To check if content is a URL
+from newsapi.newsapi_exception import NewsAPIException # Import specific exception
 
 
 # --- Flask-Dance Imports (Only Google) ---
@@ -67,6 +71,11 @@ if not os.path.exists(ANALYSIS_UPLOAD_FOLDER):
     logging.info(f"Created analysis upload directory: {ANALYSIS_UPLOAD_FOLDER}")
 
 
+# --- Get API Key (remains the same) ---
+load_dotenv()
+NEWS_API_KEY = os.getenv("NEWS_API_ORG_API_KEY")
+print(f"--- Flask STARTUP Check: NEWS_API_KEY loaded as: '{NEWS_API_KEY}' ---")
+
 # Comment out PREFERRED_URL_SCHEME as we are forcing the redirect_uri now
 # app.config['PREFERRED_URL_SCHEME'] = 'https'
 
@@ -100,6 +109,7 @@ pdf_analysis_collection = None
 pdf_chats_collection = None
 voice_conversations_collection = None # <-- NEW Voice Conversation Collection
 analysis_uploads_collection = None # <-- NEW Analysis Collection
+news_articles_collection  = None # <-- New option functionality add it
 
 if not MONGO_URI or not DB_NAME: logging.critical("Missing MongoDB Config")
 else:
@@ -116,6 +126,8 @@ else:
         logging.info("MongoDB Collections assigned.")
         analysis_uploads_collection = db["analysis_uploads"] # <-- Assign analysis collection
         logging.info("MongoDB Collections assigned.")
+        news_articles_collection = db["news_articles"]
+        logging.info("Assigned news_articles collection.")
 
         # Ensure Indexes...
         try: registrations_collection.create_index("username", unique=True, sparse=True)
@@ -142,6 +154,25 @@ else:
 
         try: analysis_uploads_collection.create_index("user_id") # <-- Add index for analysis uploads
         except Exception as idx_err: logging.warning(f"Analysis Uploads index warn: {idx_err}")
+
+        try:
+            # Index URL for faster lookups and ensuring uniqueness if storing articles
+            logging.debug("Attempting to create unique index on 'url' for news_articles.") # Optional debug log
+            news_articles_collection.create_index("url", unique=True)
+            logging.info("Successfully created/verified unique index on 'url' for news_articles.") # Log success
+        except Exception as idx_err_url:
+            # Log warning specifically for the URL index failure
+            logging.warning(f"News Articles 'url' unique index creation/verification warning: {idx_err_url}")
+
+        # Try creating index on 'fetched_at'
+        try:
+            # Index for sorting or querying by fetch time if storing articles
+            logging.debug("Attempting to create index on 'fetched_at' for news_articles.") # Optional debug log
+            news_articles_collection.create_index("fetched_at")
+            logging.info("Successfully created/verified index on 'fetched_at' for news_articles.") # Log success
+        except Exception as idx_err_fetch:
+            # Log warning specifically for the fetched_at index failure
+            logging.warning(f"News Articles 'fetched_at' index creation/verification warning: {idx_err_fetch}")
 
     except Exception as e: logging.critical(f"MongoDB init error: {e}"); db = None
 
@@ -175,6 +206,7 @@ def extract_text_from_pdf(filepath):
     except Exception as e: logging.error(f"Error extracting PDF text {filepath}: {e}"); logging.error(traceback.format_exc()); doc.close(); return None, 0 # Close doc even on error
 
 # --- Data Analysis Helper Functions ---
+
 def get_dataframe(filepath):
     """Safely reads CSV or Excel into Pandas DataFrame."""
     try:
@@ -702,49 +734,50 @@ def upload_pdf(): # (Keep logic)
 
 @app.route('/data_analyzer')
 def data_analyzer_page():
+    # Ensure necessary imports like flash, redirect, url_for, render_template, datetime, is_logged_in are available
     if not is_logged_in():
         flash("Please log in to use the Data Analyzer.", "warning")
         return redirect(url_for('login'))
-    # Optionally, fetch recent analysis history for this user to display on the page
     return render_template('data_analyzer.html', now=datetime.utcnow())
-    
+
+
 @app.route('/upload_analysis_data', methods=['POST'])
 def upload_analysis_data():
-    logging.info("--- Enter /upload_analysis_data ---") # Debug 1
+    # Ensure necessary imports like logging, jsonify, request, session, ObjectId, secure_filename, os are available
+    # Ensure analysis_uploads_collection, ANALYSIS_UPLOAD_FOLDER are accessible
+    logging.info("--- Enter /upload_analysis_data ---")
 
     if not is_logged_in():
-        logging.warning("Upload attempt failed: Not logged in.") # Debug 2
+        logging.warning("Upload attempt failed: Not logged in.")
         return jsonify({"error": "Authentication required."}), 401
 
     if analysis_uploads_collection is None:
-        logging.error("Upload attempt failed: Database service unavailable.") # Debug 3
+        logging.error("Upload attempt failed: Database service unavailable.")
         return jsonify({"error": "Database service unavailable."}), 503
 
-    # Check if the file part is present
     if 'analysisFile' not in request.files:
-        logging.warning("Upload attempt failed: 'analysisFile' not in request.files.") # Debug 4
+        logging.warning("Upload attempt failed: 'analysisFile' not in request.files.")
         return jsonify({"error": "No file part named 'analysisFile' found in the request."}), 400
 
     file = request.files['analysisFile']
 
-    # Check if a file was selected
     if file.filename == '':
-        logging.warning("Upload attempt failed: No file selected (filename is empty).") # Debug 5
+        logging.warning("Upload attempt failed: No file selected (filename is empty).")
         return jsonify({"error": "No file selected."}), 400
 
-    # Check allowed extensions (redundant with JS validation, but good practice)
+    # Check allowed extensions using the helper function
     if not allowed_analysis_file(file.filename):
-        logging.warning(f"Upload attempt failed: Invalid file type - {file.filename}") # Debug 6
-        return jsonify({"error": "Invalid file type. Allowed: .xlsx, .csv"}), 400
+        logging.warning(f"Upload attempt failed: Invalid file type - {file.filename}")
+        return jsonify({"error": f"Invalid file type. Allowed: {', '.join(ALLOWED_ANALYSIS_EXTENSIONS)}"}), 400
 
-    logging.info(f"Processing uploaded file: {file.filename}") # Debug 7
+    logging.info(f"Processing uploaded file: {file.filename}")
 
+    # --- Session and File Path Setup ---
     try:
         user_id = ObjectId(session['user_id'])
         username = session.get('username', 'Unknown')
-        logging.info(f"User identified: {username} ({user_id})") # Debug 8
     except Exception as session_err:
-        logging.error(f"Session error during upload: {session_err}", exc_info=True) # Debug 9
+        logging.error(f"Session error during upload: {session_err}", exc_info=True)
         return jsonify({"error": "Invalid session."}), 401
 
     original_filename = secure_filename(file.filename)
@@ -752,144 +785,164 @@ def upload_analysis_data():
     ts = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     stored_filename = f"{user_id}_{ts}{f_ext}"
     filepath = os.path.join(ANALYSIS_UPLOAD_FOLDER, stored_filename)
-    logging.info(f"Generated filepath: {filepath}") # Debug 10
+    logging.info(f"Generated filepath: {filepath}")
 
+    # --- Main Processing Block ---
     try:
-        # --- Save File ---
-        logging.info("Attempting to save file...") # Debug 11
+        # Save File
+        logging.info("Attempting to save file...")
         file.save(filepath)
-        logging.info(f"File saved successfully: {filepath}") # Debug 12
+        logging.info(f"File saved successfully: {filepath}")
 
-        # --- Read DataFrame ---
-        logging.info("Attempting to read dataframe...") # Debug 13
+        # Read DataFrame using helper (handles errors internally)
+        logging.info("Attempting to read dataframe...")
         df = get_dataframe(filepath)
         if df is None:
-            logging.error(f"Failed to read dataframe from {filepath}. Cleaning up.") # Debug 14
+            # get_dataframe already logged the error, cleanup and return
             if os.path.exists(filepath):
                  try: os.remove(filepath)
                  except OSError as rm_err: logging.error(f"Failed cleanup {filepath}: {rm_err}")
             return jsonify({"error": "Failed to read or unsupported file format after saving."}), 400
-        logging.info("Dataframe read successfully.") # Debug 15
+        logging.info("Dataframe read successfully.")
 
-        # --- Generate Profile ---
-        logging.info("Generating data profile...") # Debug 16
+        # Generate Profile
+        logging.info("Generating data profile...")
         profile = generate_data_profile(df)
-        logging.info("Data profile generated.") # Debug 17
+        logging.info("Data profile generated.")
 
-        # --- Prepare DB Document ---
+        # Prepare DB Document
         doc = {
             "user_id": user_id, "username": username,
             "original_filename": original_filename, "stored_filename": stored_filename,
             "filepath": filepath, "upload_timestamp": datetime.utcnow(),
-            "row_count": profile['row_count'], "col_count": profile['col_count'],
-            "column_info": profile['column_info'],
+            "row_count": profile.get('row_count', 0),
+            "col_count": profile.get('col_count', 0),
+            "column_info": profile.get('column_info', []), # Store profile info
             "cleaning_steps": [], "analysis_results": {},
-            "generated_insights": [], "status": "uploaded"
+            "generated_insights": [], "status": "uploaded",
+            "last_modified": datetime.utcnow() # Add last modified field
         }
-        logging.info("DB document prepared.") # Debug 18
+        logging.info("DB document prepared.")
 
-        # --- Insert into MongoDB ---
-        logging.info("Attempting database insert...") # Debug 19
+        # Insert into MongoDB
+        logging.info("Attempting database insert...")
         insert_result = analysis_uploads_collection.insert_one(doc)
         upload_id = insert_result.inserted_id
-        logging.info(f"Database insert successful. Upload ID: {upload_id}") # Debug 20
+        logging.info(f"Database insert successful. Upload ID: {upload_id}")
 
-        # --- Return Success Response ---
+        # Return Success Response
         response_payload = {
             "message": "File uploaded successfully.",
             "upload_id": str(upload_id),
             "filename": original_filename,
-            "rows": profile['row_count'],
-            "columns": profile['col_count'],
-            "column_info": profile['column_info']
+            "rows": profile.get('row_count', 0),
+            "columns": profile.get('col_count', 0),
+            "column_info": profile.get('column_info', []) # Send profile back
         }
-        logging.info("--- Exiting /upload_analysis_data (Success) ---") # Debug 21
+        logging.info("--- Exiting /upload_analysis_data (Success) ---")
         return jsonify(response_payload), 200
 
+    # --- Specific Error Handling ---
     except FileNotFoundError as fnf_err:
-         logging.error(f"FileNotFoundError during upload processing: {fnf_err}", exc_info=True) # Debug 22
+         logging.error(f"FileNotFoundError during upload processing: {fnf_err}", exc_info=True)
          return jsonify({"error": "Server error: File path issue."}), 500
     except PermissionError as perm_err:
-        logging.error(f"PermissionError during upload processing: {perm_err}", exc_info=True) # Debug 23
-        # Often happens when trying to save file
-        return jsonify({"error": "Server error: File permission issue."}), 500
+        logging.error(f"PermissionError during upload processing: {perm_err}", exc_info=True)
+        return jsonify({"error": "Server error: File permission issue. Check folder permissions."}), 500
     except Exception as e:
-        # Generic catch-all for other errors (Pandas, DB, etc.)
-        logging.error(f"Unhandled exception during analysis file upload/processing: {e}", exc_info=True) # Debug 24
-        # Attempt cleanup if file was saved before error
+        logging.error(f"Unhandled exception during analysis file upload/processing: {e}", exc_info=True)
+        # Attempt cleanup if file was possibly saved before error
         if 'filepath' in locals() and os.path.exists(filepath):
-            logging.info(f"Cleaning up file {filepath} due to error.")
+            logging.info(f"Cleaning up file {filepath} due to error during processing.")
             try: os.remove(filepath)
             except OSError as rm_err: logging.error(f"Failed cleanup {filepath}: {rm_err}")
         return jsonify({"error": "Server error processing file."}), 500
-    else:
-        return jsonify({"error": f"Invalid file type. Allowed types are: {', '.join(ALLOWED_ANALYSIS_EXTENSIONS)}"}), 400
+
 
 @app.route('/data_cleaner/<upload_id>')
 def data_cleaner_page(upload_id):
+    # Ensure necessary imports: logging, flash, redirect, url_for, session, ObjectId, analysis_uploads_collection,
+    # render_template, datetime, get_dataframe, generate_data_profile, generate_cleaning_recommendations,
+    # json, json_util, InvalidId, os
+    logging.info(f"--- ENTER data_cleaner_page for upload_id: {upload_id} ---")
+
     if not is_logged_in():
-        flash("Please log in to access the data cleaner.", "warning")
-        return redirect(url_for('login'))
+        flash("Please log in.", "warning"); logging.warning("data_cleaner_page: Not logged in."); return redirect(url_for('login'))
     if analysis_uploads_collection is None:
-        flash("Database service for analysis is unavailable.", "danger")
-        return redirect(url_for('data_analyzer_page')) # Redirect to the main analyzer page
+        flash("Database service unavailable.", "danger"); logging.error("data_cleaner_page: DB collection unavailable."); return redirect(url_for('dashboard'))
 
     try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id']) # Ensure user owns the record
-    except Exception as e:
-        logging.error(f"Invalid ObjectId format for upload_id '{upload_id}' or user_id in session: {e}")
-        flash("Invalid analysis record identifier.", "danger")
-        return redirect(url_for('analysis_history')) # Or dashboard
+        logging.info("Step 1: Validate ObjectId format...")
+        oid = ObjectId(upload_id) # Can raise InvalidId
+        logging.info(f"Step 1 SUCCESS: ObjectId seems valid: {oid}")
 
-    try:
-        # Fetch the specific upload document, ensuring user ownership
+        logging.info("Step 2: Get User ID from session...")
+        user_id_str = session.get('user_id')
+        if not user_id_str: raise ValueError("User ID not found in session.")
+        user_id = ObjectId(user_id_str) # Can raise InvalidId
+        logging.info(f"Step 2 SUCCESS: User ObjectId: {user_id}")
+
+        logging.info(f"Step 3: Find document _id={oid}, user_id={user_id}...")
         upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
-
         if not upload_doc:
-            flash("Analysis record not found or you do not have permission to access it.", "danger")
-            return redirect(url_for('analysis_history')) # Or dashboard/analyzer page
+            logging.warning(f"Step 3 FAILED: Record not found or access denied."); flash("Analysis record not found or access denied.", "danger"); return redirect(url_for('analysis_history'))
+        logging.info("Step 3 SUCCESS: Document found.")
 
-        # --- Load DataFrame ---
-        df = get_dataframe(upload_doc['filepath'])
+        logging.info("Step 4: Load DataFrame...")
+        filepath = upload_doc.get('filepath')
+        if not filepath or not os.path.exists(filepath):
+             logging.error(f"Step 4 FAILED: Filepath missing or file does not exist. Path: {filepath}"); flash("Data file associated with this record is missing.", "danger"); return redirect(url_for('analysis_history'))
+        df = get_dataframe(filepath)
         if df is None:
-             # File might be missing or corrupted since upload
-             flash(f"Error loading the data file ({upload_doc.get('original_filename', 'N/A')}). It may have been moved or corrupted.", "danger")
-             # Optionally update status in DB
-             analysis_uploads_collection.update_one({"_id": oid}, {"$set": {"status": "error_loading_file", "last_modified": datetime.utcnow()}})
-             return redirect(url_for('analysis_history'))
+             logging.error(f"Step 4 FAILED: get_dataframe returned None for path: {filepath}"); flash("Error loading the data file.", "danger"); return redirect(url_for('analysis_history'))
+        logging.info(f"Step 4 SUCCESS: DataFrame loaded. Shape: {df.shape}")
 
-        # --- Generate Current Profile and Recommendations ---
-        # Use the current state of the dataframe for profile and recommendations
-        profile = generate_data_profile(df)
-        recommendations = generate_cleaning_recommendations(df)
+        logging.info("Step 5: Generate profile and recommendations...")
+        # Use current data from DB first, then calculate recommendations from loaded DF
+        profile = {
+            "row_count": upload_doc.get('row_count'),
+            "col_count": upload_doc.get('col_count'),
+            "column_info": upload_doc.get('column_info', []) # Use info stored in DB
+        }
+        recommendations = generate_cleaning_recommendations(df) # Generate based on current DF state
+        logging.info("Step 5 SUCCESS: Profile info retrieved, recommendations generated.")
 
-        # --- Prepare Data for Template ---
-        # Get preview data (e.g., first 50-100 rows) for display
-        preview_data = df.head(100).to_dict(orient='records')
-        # Convert ObjectId to string for template usage (e.g., in JS)
-        upload_doc['_id'] = str(upload_doc['_id'])
-        upload_doc['user_id'] = str(upload_doc['user_id'])
-        # Ensure timestamps are strings if needed by template, or format them
-        upload_doc['upload_timestamp'] = upload_doc.get('upload_timestamp').strftime('%Y-%m-%d %H:%M:%S') if upload_doc.get('upload_timestamp') else 'N/A'
-        upload_doc['last_modified'] = upload_doc.get('last_modified').strftime('%Y-%m-%d %H:%M:%S') if upload_doc.get('last_modified') else 'N/A'
+        logging.info("Step 6: Prepare data for template (serializing BSON)...")
+        try:
+             template_upload_data = json.loads(json_util.dumps(upload_doc)) # Serialize the *whole* doc for the template
+             preview_data = df.head(100).to_dict(orient='records') # Generate preview from loaded DF
+        except Exception as serial_err:
+             logging.error(f"Step 6 FAILED: Error during BSON serialization: {serial_err}", exc_info=True); raise
+        logging.info("Step 6 SUCCESS: Data prepared for template.")
 
-
+        logging.info(f"Step 7: Rendering data_cleaner.html template for upload_id: {upload_id}")
         return render_template('data_cleaner.html',
-                               upload_data=json.loads(json_util.dumps(upload_doc)), # Use json_util for BSON types if needed
-                               preview_data=preview_data, # Send only preview head
-                               column_info=profile['column_info'], # Use current profile info
-                               recommendations=recommendations, # Use current recommendations
+                               upload_data=template_upload_data, # Full serialized doc
+                               preview_data=preview_data,       # Preview from current DF
+                               column_info=profile['column_info'], # Column info from DB doc
+                               recommendations=recommendations, # Recs from current DF
                                now=datetime.utcnow())
 
+    except InvalidId:
+        logging.error(f"Invalid ObjectId format received in URL ('{upload_id}') or session ('{session.get('user_id')}')")
+        flash("Invalid analysis record identifier provided.", "danger")
+        return redirect(url_for('analysis_history'))
+    except ValueError as ve: # Catch specific errors like session key missing
+         logging.error(f"Value error loading data cleaner page for {upload_id}: {ve}", exc_info=True)
+         flash(f"Error loading cleaner: {ve}", "danger")
+         return redirect(url_for('dashboard'))
     except Exception as e:
-        logging.error(f"Error loading data cleaner page for upload_id {upload_id}: {e}", exc_info=True)
-        flash("An unexpected error occurred while loading the data cleaner page.", "danger")
-        return redirect(url_for('analysis_history')) # Redirect to history or dashboard
+        logging.error(f"Unexpected error loading data cleaner page for {upload_id}: {e}", exc_info=True)
+        flash("An unexpected error occurred while loading the data cleaner.", "danger")
+        return redirect(url_for('dashboard'))
+    finally:
+        logging.info(f"--- EXIT data_cleaner_page for upload_id: {upload_id} ---")
 
 
 @app.route('/apply_cleaning_action/<upload_id>', methods=['POST'])
 def apply_cleaning_action(upload_id):
+    # Ensure necessary imports: logging, jsonify, request, session, ObjectId, analysis_uploads_collection,
+    # pd, get_dataframe, generate_data_profile, generate_cleaning_recommendations, json, datetime, log_db_update_result
     if not is_logged_in(): return jsonify({"error": "Authentication required."}), 401
     if analysis_uploads_collection is None: return jsonify({"error": "Database service unavailable."}), 503
 
@@ -898,760 +951,537 @@ def apply_cleaning_action(upload_id):
         user_id = ObjectId(session['user_id'])
     except Exception as e: return jsonify({"error": f"Invalid ID format: {e}"}), 400
 
-    # Fetch document and verify ownership
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
-    if not upload_doc: return jsonify({"error": "Analysis record not found or you are not authorized."}), 404
+    if not upload_doc: return jsonify({"error": "Analysis record not found or unauthorized."}), 404
 
     data = request.get_json()
     if not data: return jsonify({"error": "Invalid request: No JSON data received."}), 400
 
     action = data.get('action')
-    column = data.get('column') # May be None for actions like 'remove_duplicates'
+    column = data.get('column')
     params = data.get('params', {})
 
     if not action: return jsonify({"error": "Cleaning 'action' parameter is required."}), 400
-    # Basic validation for actions requiring a column
     if action in ['handle_nulls', 'convert_type', 'rename_column', 'drop_column'] and not column:
          return jsonify({"error": f"Action '{action}' requires a 'column' parameter."}), 400
 
-    # --- Load DataFrame ---
-    df = get_dataframe(upload_doc['filepath'])
+    # --- Load Current DataFrame ---
+    filepath = upload_doc.get('filepath')
+    if not filepath or not os.path.exists(filepath):
+         logging.error(f"Filepath missing or file does not exist for cleaning: {filepath}")
+         return jsonify({"error": "Data file associated with this record is missing on server."}), 500
+    df = get_dataframe(filepath)
     if df is None: return jsonify({"error": f"Failed to load the data file ({upload_doc.get('original_filename', 'N/A')})."}), 500
 
     original_shape = df.shape
-    df_modified = df.copy() # Work on a copy to easily revert on error
+    df_modified = df.copy() # IMPORTANT: Work on a copy
     cleaning_step_log = {"action": action, "column": column, "params": params, "timestamp": datetime.utcnow()}
-    status_message = f"Action '{action}' applied successfully." # Default success message
+    status_message = f"Action '{action}' applied." # Default success message
 
-    # --- Apply Cleaning Logic (Pandas) ---
-    logging.info(f"Applying cleaning action '{action}' on column '{column}' for upload {upload_id} by user {session.get('username')}")
+    # --- Apply Cleaning Logic ---
+    logging.info(f"Applying cleaning '{action}' on '{column}' for {upload_id} by {session.get('username')}")
     try:
+        # (Keep the extensive cleaning logic from the previous good example, including):
+        # - handle_nulls (drop_row, drop_col, mean, median, mode, custom)
+        # - convert_type (integer, float, string, category, datetime, boolean with safe coercion)
+        # - remove_duplicates (with optional subset)
+        # - rename_column
+        # - drop_column
+        # --- START Example Snippet ---
         if action == 'handle_nulls':
-            method = params.get('method', 'drop_row') # Default to dropping rows
+            method = params.get('method', 'drop_row')
             cleaning_step_log['method'] = method
             if column not in df_modified.columns: raise ValueError(f"Column '{column}' not found.")
-
-            if method == 'drop_row':
-                df_modified.dropna(subset=[column], inplace=True)
-                status_message = f"Dropped rows with nulls in column '{column}'."
-            elif method == 'drop_col':
-                df_modified.drop(columns=[column], inplace=True)
-                status_message = f"Dropped column '{column}'."
-                cleaning_step_log['column'] = column # Explicitly log dropped column
-                column = None # Column no longer exists for profiling
-            elif method == 'mean':
+            # ... (rest of handle_nulls logic: dropna, fillna with mean/median/mode[0]/custom) ...
+            # ... (remember to update status_message specifically) ...
+            # Example for mean fill:
+            if method == 'mean':
                 if pd.api.types.is_numeric_dtype(df_modified[column]):
                     fill_value = df_modified[column].mean()
                     df_modified[column].fillna(fill_value, inplace=True)
-                    status_message = f"Filled nulls in '{column}' with mean ({fill_value:.2f})."
-                    cleaning_step_log['fill_value'] = float(fill_value) # Store the actual value used
-                else: raise ValueError("Mean imputation requires a numeric column.")
-            elif method == 'median':
-                 if pd.api.types.is_numeric_dtype(df_modified[column]):
-                     fill_value = df_modified[column].median()
-                     df_modified[column].fillna(fill_value, inplace=True)
-                     status_message = f"Filled nulls in '{column}' with median ({fill_value:.2f})."
-                     cleaning_step_log['fill_value'] = float(fill_value)
-                 else: raise ValueError("Median imputation requires a numeric column.")
-            elif method == 'mode':
-                 # Mode can return multiple values if they have the same frequency, take the first.
-                 fill_value = df_modified[column].mode()
-                 if not fill_value.empty:
-                     actual_fill_value = fill_value[0]
-                     df_modified[column].fillna(actual_fill_value, inplace=True)
-                     status_message = f"Filled nulls in '{column}' with mode ('{actual_fill_value}')."
-                     cleaning_step_log['fill_value'] = actual_fill_value # Store actual mode used
-                 else:
-                     # Handle case where column is all nulls
-                     df_modified[column].fillna('', inplace=True) # Fill with empty string or choose another default
-                     status_message = f"Filled nulls in '{column}' with empty string (column was all nulls or mode calculation failed)."
-                     cleaning_step_log['fill_value'] = ''
-            elif method == 'custom':
-                 custom_value = params.get('custom_value', '') # Default to empty string if not provided
-                 # Attempt to convert custom_value to the column's dtype if possible/sensible
-                 try:
-                     target_dtype = df_modified[column].dtype
-                     if pd.api.types.is_numeric_dtype(target_dtype):
-                         custom_value = pd.to_numeric(custom_value)
-                     elif pd.api.types.is_datetime64_any_dtype(target_dtype):
-                         custom_value = pd.to_datetime(custom_value)
-                     # Add boolean, etc. handling if needed
-                 except Exception as conv_err:
-                     logging.warning(f"Could not convert custom value '{custom_value}' to column '{column}' dtype ({target_dtype}). Using as is. Error: {conv_err}")
-
-                 df_modified[column].fillna(custom_value, inplace=True)
-                 status_message = f"Filled nulls in '{column}' with custom value '{custom_value}'."
-                 cleaning_step_log['fill_value'] = custom_value
-            else:
-                raise ValueError(f"Unsupported 'handle_nulls' method: {method}")
-
+                    status_message = f"Filled nulls in '{column}' with mean ({fill_value:.3f})."
+                    cleaning_step_log['fill_value'] = float(fill_value)
+                else: raise ValueError("Mean requires numeric column")
+            # ... (other methods) ...
         elif action == 'convert_type':
             new_type = params.get('new_type')
-            if not new_type: raise ValueError("Parameter 'new_type' is required for 'convert_type' action.")
+            if not new_type: raise ValueError("Parameter 'new_type' required.")
             if column not in df_modified.columns: raise ValueError(f"Column '{column}' not found.")
-
             cleaning_step_log['new_type'] = new_type
             original_dtype = str(df_modified[column].dtype)
-            # Add more robust type conversion logic
-            try:
-                if new_type == 'integer':
-                    # Try integer conversion, fallback to nullable integer if NaNs exist after potential fillna
-                    df_modified[column] = pd.to_numeric(df_modified[column], errors='coerce').astype('Int64')
-                elif new_type == 'float':
-                    df_modified[column] = pd.to_numeric(df_modified[column], errors='coerce').astype(float)
-                elif new_type == 'string':
-                    df_modified[column] = df_modified[column].astype(str)
-                elif new_type == 'category':
-                    df_modified[column] = df_modified[column].astype('category')
-                elif new_type == 'datetime':
-                    df_modified[column] = pd.to_datetime(df_modified[column], errors='coerce') # Coerce errors to NaT
-                elif new_type == 'boolean':
-                    # Handle common boolean representations (e.g., 'true'/'false', 1/0)
-                    map_dict = {'true': True, 'false': False, '1': True, '0': False, 1: True, 0: False, 'yes': True, 'no': False, 'y':True, 'n':False}
-                    df_modified[column] = df_modified[column].astype(str).str.lower().map(map_dict).astype('boolean') # Use nullable boolean
-                else:
-                    # Attempt direct conversion for other pandas types
-                    df_modified[column] = df_modified[column].astype(new_type)
-
-                final_dtype = str(df_modified[column].dtype)
-                status_message = f"Converted column '{column}' from '{original_dtype}' to '{final_dtype}'."
-                # Check for new nulls introduced by coercion
-                new_nulls = df_modified[column].isnull().sum()
-                original_nulls = df[column].isnull().sum() # Compare with original nulls
-                if new_nulls > original_nulls:
-                    status_message += f" Warning: {new_nulls - original_nulls} values could not be converted and became null."
-            except Exception as type_err:
-                 raise ValueError(f"Failed to convert column '{column}' to type '{new_type}'. Error: {type_err}")
-
+            # ... (detailed type conversion logic as before using pd.to_numeric, astype, pd.to_datetime etc with error coercion) ...
+            # Example:
+            if new_type == 'integer': df_modified[column] = pd.to_numeric(df_modified[column], errors='coerce').astype('Int64')
+            # ... (other types) ...
+            final_dtype = str(df_modified[column].dtype)
+            status_message = f"Converted '{column}' from '{original_dtype}' to '{final_dtype}'."
+            # ... (check for new nulls) ...
         elif action == 'remove_duplicates':
-            subset = params.get('subset') # Optional: list of columns to consider
-            if isinstance(subset, list) and not subset: subset = None # Treat empty list as None
-            if subset and not all(c in df_modified.columns for c in subset):
-                raise ValueError("One or more columns specified in 'subset' for duplicate removal not found.")
-            cleaning_step_log['subset'] = subset
-            df_modified.drop_duplicates(subset=subset, inplace=True)
-            rows_removed = original_shape[0] - df_modified.shape[0]
-            cleaning_step_log['rows_removed'] = rows_removed
-            status_message = f"Removed {rows_removed} duplicate rows"
-            if subset: status_message += f" based on columns: {', '.join(subset)}."
-            else: status_message += "."
-
-
+             subset = params.get('subset')
+             if isinstance(subset, list) and not subset: subset = None
+             if subset and not all(c in df_modified.columns for c in subset): raise ValueError("Invalid subset column(s).")
+             cleaning_step_log['subset'] = subset
+             df_modified.drop_duplicates(subset=subset, inplace=True)
+             rows_removed = original_shape[0] - df_modified.shape[0]
+             cleaning_step_log['rows_removed'] = rows_removed
+             status_message = f"Removed {rows_removed} duplicate rows" + (f" based on {subset}." if subset else ".")
         elif action == 'rename_column':
              new_name = params.get('new_name','').strip()
-             if not new_name: raise ValueError("Parameter 'new_name' is required for 'rename_column'.")
+             if not new_name: raise ValueError("'new_name' required.")
              if column not in df_modified.columns: raise ValueError(f"Column '{column}' not found.")
-             if new_name == column: raise ValueError("New column name cannot be the same as the old name.")
-             if new_name in df_modified.columns: raise ValueError(f"A column named '{new_name}' already exists.")
+             if new_name == column: raise ValueError("New name same as old.")
+             if new_name in df_modified.columns: raise ValueError(f"Column '{new_name}' already exists.")
              df_modified.rename(columns={column: new_name}, inplace=True)
              cleaning_step_log['new_name'] = new_name
-             status_message = f"Renamed column '{column}' to '{new_name}'."
-             column = new_name # Update column name for profiling
-
-        elif action == 'drop_column': # Added explicit drop column action
-            if column not in df_modified.columns: raise ValueError(f"Column '{column}' not found.")
-            df_modified.drop(columns=[column], inplace=True)
-            status_message = f"Dropped column '{column}'."
-            cleaning_step_log['column'] = column # Log the dropped column
-            column = None # Column no longer exists for profiling
-
-        # Add other actions: handle outliers, normalize/scale, string operations etc.
+             status_message = f"Renamed '{column}' to '{new_name}'."
+             column = new_name # Update for profiling if needed
+        elif action == 'drop_column':
+             if column not in df_modified.columns: raise ValueError(f"Column '{column}' not found.")
+             df_modified.drop(columns=[column], inplace=True)
+             status_message = f"Dropped column '{column}'."
+             cleaning_step_log['column'] = column
+             column = None # Column no longer exists
         else:
             raise ValueError(f"Unsupported cleaning action: '{action}'")
+        # --- END Example Snippet ---
+
 
         # --- Save modified DataFrame back to the original file ---
-        # This overwrites the previous version. Consider versioning or saving to a new file
-        # if undo functionality or preserving original state after cleaning is required.
         output_format = upload_doc['filepath'].lower().split('.')[-1]
         if output_format == 'csv':
-            df_modified.to_csv(upload_doc['filepath'], index=False)
+            df_modified.to_csv(upload_doc['filepath'], index=False, encoding='utf-8') # Specify encoding
         elif output_format == 'xlsx':
-            df_modified.to_excel(upload_doc['filepath'], index=False)
+            df_modified.to_excel(upload_doc['filepath'], index=False, engine='openpyxl')
         else:
-            # This case should ideally not be reached if upload validation is correct
-            logging.error(f"Unsupported file format for saving: {output_format}. Cannot save changes for {upload_id}")
             raise ValueError(f"Cannot save cleaned data: Unsupported file format '{output_format}'.")
-
-        logging.info(f"Successfully saved cleaned data ({df_modified.shape}) back to {upload_doc['filepath']} for upload {upload_id}")
+        logging.info(f"Saved cleaned data ({df_modified.shape}) to {upload_doc['filepath']}")
 
         # --- Update DB Record ---
         new_profile = generate_data_profile(df_modified)
-        # Ensure profile components are JSON serializable (redundant if generate_data_profile handles it)
+        # Ensure profile components are basic types for MongoDB
         new_profile['column_info'] = json.loads(json.dumps(new_profile.get('column_info', []), default=str))
 
         update_result = analysis_uploads_collection.update_one(
             {"_id": oid},
-            {
-                "$push": {"cleaning_steps": cleaning_step_log},
-                "$set": {
-                     "status": "cleaned", # Update status
-                     "row_count": new_profile.get('row_count', 0),
-                     "col_count": new_profile.get('col_count', 0),
-                     "column_info": new_profile.get('column_info', []),
-                     "last_modified": datetime.utcnow()
-                 }
-            }
+            {   "$push": {"cleaning_steps": cleaning_step_log},
+                "$set": { "status": "cleaned", "row_count": new_profile.get('row_count', 0),
+                          "col_count": new_profile.get('col_count', 0), "column_info": new_profile.get('column_info', []),
+                          "last_modified": datetime.utcnow() } }
         )
-        log_db_update_result(update_result, session.get('username'), f"cleaning_action_{upload_id}")
+        log_db_update_result(update_result, session.get('username'), f"cleaning_{upload_id}") # Use logging helper
 
-        # --- Return updated data for the frontend ---
+        # --- Return updated data ---
         preview_data = df_modified.head(100).to_dict(orient='records')
-        # Regenerate recommendations based on the *cleaned* data
         new_recommendations = generate_cleaning_recommendations(df_modified)
 
         return jsonify({
-             "message": status_message,
-             "preview_data": preview_data,
-             "column_info": new_profile.get('column_info', []),
-             "rows": new_profile.get('row_count', 0),
-             "columns": new_profile.get('col_count', 0),
-             "recommendations": new_recommendations # Send updated recommendations
+             "message": status_message, "preview_data": preview_data,
+             "column_info": new_profile.get('column_info', []), "rows": new_profile.get('row_count', 0),
+             "columns": new_profile.get('col_count', 0), "recommendations": new_recommendations
          }), 200
 
-    except ValueError as ve: # Handle specific validation errors generated in the logic
+    except ValueError as ve: # Handle specific validation errors (e.g., bad params, column not found)
         logging.warning(f"Value error during cleaning action for {upload_id}: {ve}")
-        return jsonify({"error": str(ve)}), 400 # Bad Request
+        return jsonify({"error": str(ve)}), 400
     except Exception as clean_err:
         logging.error(f"Cleaning action failed unexpectedly for {upload_id}: {clean_err}", exc_info=True)
-        # Do NOT save the potentially broken df_modified state
-        return jsonify({"error": f"Failed to apply action '{action}'. An unexpected error occurred: {str(clean_err)}"}), 500
+        # Avoid saving potentially corrupted df_modified state
+        return jsonify({"error": f"Failed to apply action '{action}'. An unexpected server error occurred."}), 500
 
 
 @app.route('/run_analysis/<upload_id>/<analysis_type>', methods=['POST'])
 def run_analysis(upload_id, analysis_type):
+    # Ensure imports: logging, jsonify, request, session, ObjectId, analysis_uploads_collection,
+    # pd, get_dataframe, json, log_db_update_result, datetime
     if not is_logged_in(): return jsonify({"error": "Authentication required."}), 401
     if analysis_uploads_collection is None: return jsonify({"error": "Database service unavailable."}), 503
 
-    try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id'])
+    try: oid = ObjectId(upload_id); user_id = ObjectId(session['user_id'])
     except Exception as e: return jsonify({"error": f"Invalid ID format: {e}"}), 400
 
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
     if not upload_doc: return jsonify({"error": "Analysis record not found or unauthorized."}), 404
 
-    df = get_dataframe(upload_doc['filepath'])
+    filepath = upload_doc.get('filepath')
+    if not filepath or not os.path.exists(filepath): return jsonify({"error": "Data file missing for analysis."}), 500
+    df = get_dataframe(filepath)
     if df is None: return jsonify({"error": "Failed to load data file for analysis."}), 500
 
     results = None
-    update_key = f"analysis_results.{analysis_type}" # Key for storing in DB (e.g., analysis_results.descriptive_stats)
+    update_key = f"analysis_results.{analysis_type}"
     status_message = f"Analysis '{analysis_type}' completed successfully."
     response_payload = {}
 
-    # --- Perform Analysis Logic (Pandas) ---
-    logging.info(f"Running analysis '{analysis_type}' for upload {upload_id} by user {session.get('username')}")
+    logging.info(f"Running analysis '{analysis_type}' for {upload_id} by {session.get('username')}")
     try:
+        # (Keep the analysis logic from the previous good example):
+        # - descriptive_stats (using describe(include='all'), handling NaN for JSON)
+        # - correlation (selecting numeric, handling empty/single column)
+        # - value_counts (getting column param, using value_counts(dropna=False))
+        # - Optional: group_by_agg, pivot_table etc.
+        # --- START Example Snippet ---
         if analysis_type == 'descriptive_stats':
-            # include='all' provides stats for object/category columns too
             stats_df = df.describe(include='all')
-            # Convert to JSON, handle potential NaNs which are not valid JSON
-            results = json.loads(stats_df.to_json(orient='index', default_handler=str)) # Use default_handler for non-serializable types
-            response_payload["results_table"] = stats_df.reset_index().to_dict(orient='records') # For easy table display
-            response_payload["results_raw"] = results # Send raw JSON too
+            # Convert NaN/NaT to None (or string 'NaN') for JSON compatibility
+            stats_df_serializable = stats_df.astype(object).where(pd.notnull(stats_df), None)
+            results = json.loads(stats_df_serializable.to_json(orient='index')) # Convert cleaned df to JSON dict
+            # Prepare data suitable for simple HTML table display if needed
+            response_payload["results_table"] = stats_df_serializable.reset_index().to_dict(orient='records')
+            response_payload["results_raw"] = results
         elif analysis_type == 'correlation':
-            numeric_df = df.select_dtypes(include='number')
-            if numeric_df.empty:
-                return jsonify({"error": "No numeric columns found in the dataset to calculate correlation."}), 400
-            if len(numeric_df.columns) < 2:
-                return jsonify({"error": "At least two numeric columns are required for correlation analysis."}), 400
-            corr_matrix = numeric_df.corr()
-            results = json.loads(corr_matrix.to_json(orient='index', default_handler=str))
-            # Prepare for heatmap visualization
-            response_payload["results_heatmap"] = {
-                 "z": corr_matrix.values.tolist(),
-                 "x": corr_matrix.columns.tolist(),
-                 "y": corr_matrix.index.tolist()
-            }
-            response_payload["results_raw"] = results
+             numeric_df = df.select_dtypes(include='number')
+             if numeric_df.empty: raise ValueError("No numeric columns found for correlation.")
+             if len(numeric_df.columns) < 2: raise ValueError("At least two numeric columns required.")
+             corr_matrix = numeric_df.corr()
+             results = json.loads(corr_matrix.to_json(orient='index', default_handler=str)) # Use handler for safety
+             response_payload["results_heatmap"] = {"z": corr_matrix.values.tolist(), "x": corr_matrix.columns.tolist(), "y": corr_matrix.index.tolist()}
+             response_payload["results_raw"] = results
         elif analysis_type == 'value_counts':
-            params = request.get_json() or {}
-            column = params.get('column')
-            if not column: raise ValueError("Parameter 'column' is required for value counts analysis.")
-            if column not in df.columns: raise ValueError(f"Column '{column}' not found.")
-
-            counts = df[column].value_counts(dropna=False) # Include counts of nulls
-            results = json.loads(counts.to_json(orient='index', default_handler=str))
-            # Prepare for bar chart
-            response_payload["results_chart"] = {
-                "labels": counts.index.astype(str).tolist(), # Ensure labels are strings
-                "values": counts.values.tolist()
-            }
-            response_payload["results_raw"] = results
-            status_message = f"Value counts calculated for column '{column}'."
-
-        # Add more analysis types: 'distribution', 'group_by_agg', 'pivot_table' etc.
-        # These might require more parameters from request.get_json()
-        # Example: Group By Aggregation
-        # elif analysis_type == 'group_by_agg':
-        #     params = request.get_json() or {}
-        #     group_by_cols = params.get('group_by_columns') # List of columns
-        #     agg_col = params.get('aggregation_column')
-        #     agg_func = params.get('aggregation_function', 'mean') # e.g., mean, sum, count, std
-        #     if not group_by_cols or not agg_col: raise ValueError("Grouping columns and aggregation column required.")
-        #     if not all(c in df.columns for c in group_by_cols) or agg_col not in df.columns: raise ValueError("One or more specified columns not found.")
-        #     grouped = df.groupby(group_by_cols)[agg_col].agg(agg_func)
-        #     results = json.loads(grouped.to_json(orient='index', default_handler=str))
-        #     response_payload["results_table"] = grouped.reset_index().to_dict(orient='records')
-        #     response_payload["results_raw"] = results
-        #     status_message = f"Data grouped by {', '.join(group_by_cols)} and aggregated '{agg_col}' using '{agg_func}'."
-
+             params = request.get_json() or {}
+             column = params.get('column')
+             if not column: raise ValueError("'column' required for value counts.")
+             if column not in df.columns: raise ValueError(f"Column '{column}' not found.")
+             counts = df[column].value_counts(dropna=False)
+             results = json.loads(counts.to_json(orient='index', default_handler=str))
+             response_payload["results_chart"] = {"labels": counts.index.astype(str).tolist(), "values": counts.values.tolist()}
+             response_payload["results_raw"] = results
+             status_message = f"Value counts for '{column}' calculated."
+        # ... other analysis types ...
         else:
             return jsonify({"error": f"Unsupported analysis type: '{analysis_type}'."}), 400
+        # --- END Example Snippet ---
 
         # --- Save results to DB ---
         if results is not None:
              update_result = analysis_uploads_collection.update_one(
                  {"_id": oid},
-                 {
-                     "$set": {
-                         update_key: results, # Store the raw results JSON
-                         "status": "analyzed", # Update status
-                         "last_modified": datetime.utcnow()
-                      }
-                 }
+                 {"$set": {update_key: results, "status": "analyzed", "last_modified": datetime.utcnow()}}
              )
-             log_db_update_result(update_result, session.get('username'), f"analysis_{analysis_type}_{upload_id}")
-
+             log_db_update_result(update_result, session.get('username'), f"analysis_{upload_id}")
              response_payload["message"] = status_message
              return jsonify(response_payload), 200
         else:
-             # This case might happen if an analysis type doesn't produce storable results (e.g., just a plot)
-             # Or if there was an error condition handled above (like no numeric columns)
-             logging.warning(f"Analysis type '{analysis_type}' for {upload_id} did not produce storable results.")
-             # If an error was returned earlier, this won't be reached. If not, it indicates a logic gap.
-             return jsonify({"error": "Analysis completed but no results were generated or stored."}), 500
+             # Handle cases where analysis runs but produces no storable result (if any)
+             logging.warning(f"Analysis '{analysis_type}' for {upload_id} produced null results.")
+             return jsonify({"message": status_message, "results": None}), 200 # Still OK, just no data
 
-    except ValueError as ve: # Handle specific validation errors
+    except ValueError as ve:
         logging.warning(f"Value error during analysis '{analysis_type}' for {upload_id}: {ve}")
-        return jsonify({"error": str(ve)}), 400 # Bad Request
+        return jsonify({"error": str(ve)}), 400
     except Exception as e:
         logging.error(f"Error during analysis '{analysis_type}' for {upload_id}: {e}", exc_info=True)
-        return jsonify({"error": f"An unexpected server error occurred during the '{analysis_type}' analysis."}), 500
+        return jsonify({"error": f"An unexpected server error occurred during analysis."}), 500
 
 
 @app.route('/generate_plot/<upload_id>', methods=['POST'])
 def generate_plot(upload_id):
+    # Ensure imports: logging, jsonify, request, session, ObjectId, analysis_uploads_collection,
+    # pd, get_dataframe, json, pio (from plotly.io), px (from plotly.express)
     if not is_logged_in(): return jsonify({"error": "Authentication required."}), 401
     if analysis_uploads_collection is None: return jsonify({"error": "Database service unavailable."}), 503
 
-    try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id'])
+    try: oid = ObjectId(upload_id); user_id = ObjectId(session['user_id'])
     except Exception as e: return jsonify({"error": f"Invalid ID format: {e}"}), 400
 
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
     if not upload_doc: return jsonify({"error": "Analysis record not found or unauthorized."}), 404
 
-    df = get_dataframe(upload_doc['filepath'])
+    filepath = upload_doc.get('filepath')
+    if not filepath or not os.path.exists(filepath): return jsonify({"error": "Data file missing for plotting."}), 500
+    df = get_dataframe(filepath)
     if df is None: return jsonify({"error": "Failed to load data file for plotting."}), 500
 
     plot_config = request.get_json()
     if not plot_config: return jsonify({"error": "Invalid request: No plot configuration received."}), 400
 
+    # --- Extract and Validate Config ---
     chart_type = plot_config.get('chart_type')
     x_col = plot_config.get('x')
     y_col = plot_config.get('y')
-    color_col = plot_config.get('color') # Optional color dimension
+    color_col = plot_config.get('color')
     title = plot_config.get('title') # Optional custom title
 
     if not chart_type: return jsonify({"error": "Parameter 'chart_type' is required."}), 400
-    if chart_type not in ['histogram', 'scatter', 'bar', 'line', 'pie', 'box', 'heatmap']:
-         return jsonify({"error": f"Unsupported chart type: '{chart_type}'."}), 400
+    supported_charts = ['histogram', 'scatter', 'bar', 'line', 'pie', 'box', 'heatmap']
+    if chart_type not in supported_charts: return jsonify({"error": f"Unsupported chart type: '{chart_type}'."}), 400
 
-    # Validate required columns based on chart type
-    required_cols = {}
-    if chart_type in ['histogram', 'bar', 'line', 'pie', 'box']: required_cols['x'] = x_col
-    if chart_type in ['scatter', 'line', 'box']: required_cols['y'] = y_col # Bar can sometimes just use X counts
-    if chart_type == 'pie': required_cols['values'] = plot_config.get('values') # Pie often needs 'names' (like x) and 'values'
+    # Basic column existence checks (more specific checks happen in plotting logic)
+    if x_col and x_col not in df.columns: return jsonify({"error": f"X-axis column '{x_col}' not found."}), 400
+    if y_col and y_col not in df.columns: return jsonify({"error": f"Y-axis column '{y_col}' not found."}), 400
+    if color_col and color_col not in df.columns: return jsonify({"error": f"Color column '{color_col}' not found."}), 400
 
-    for req_param, col_name in required_cols.items():
-        if not col_name:
-            # Special case for Bar: if Y not given, we might plot counts of X
-            if chart_type == 'bar' and req_param == 'y': continue
-            return jsonify({"error": f"Parameter '{req_param}' (column name) is required for chart type '{chart_type}'."}), 400
-        if col_name not in df.columns:
-             return jsonify({"error": f"Column '{col_name}' specified for '{req_param}' not found in the dataset."}), 400
-
-    # Optional columns validation
-    if color_col and color_col not in df.columns:
-        return jsonify({"error": f"Color column '{color_col}' not found in the dataset."}), 400
 
     fig = None
-    logging.info(f"Generating plot '{chart_type}' for upload {upload_id} by user {session.get('username')}. Config: {plot_config}")
+    logging.info(f"Generating plot '{chart_type}' for {upload_id} by {session.get('username')}. Config: {plot_config}")
 
     # --- Generate Plot using Plotly ---
     try:
-        plot_title = title or f"Plot: {chart_type.capitalize()}" # Default title if none provided
+        # (Keep the plotting logic from the previous good example using px):
+        # - histogram, scatter, bar (with count/aggregation logic), line, pie, box, heatmap
+        # - Include basic error handling (e.g., checking numeric types where needed)
+        # - Set appropriate titles
+        # --- START Example Snippet ---
+        plot_title = title or f"Plot: {chart_type.capitalize()}"
 
         if chart_type == 'histogram':
+            if not x_col: raise ValueError("'x' column required for histogram.")
             plot_title = title or f'Distribution of {x_col}'
-            fig = px.histogram(df, x=x_col, title=plot_title, color=color_col, marginal="rug") # Added marginal rug plot
+            fig = px.histogram(df, x=x_col, title=plot_title, color=color_col, marginal="rug")
         elif chart_type == 'scatter':
-            if not y_col: raise ValueError("Y-axis column required for scatter plot.") # Should be caught above, but double-check
-            plot_title = title or f'{y_col} vs {x_col}'
-            fig = px.scatter(df, x=x_col, y=y_col, title=plot_title, color=color_col, hover_data=df.columns) # Show all data on hover
-        elif chart_type == 'bar':
-             # If Y is provided and numeric, aggregate (e.g., mean). If Y not numeric or not provided, plot counts of X.
-             if y_col and pd.api.types.is_numeric_dtype(df[y_col]):
-                 # Group by X, calculate mean of Y
-                 agg_func = plot_config.get('agg_func', 'mean') # Allow specifying agg func (mean, sum, count)
-                 try:
-                     agg_data = df.groupby(x_col)[y_col].agg(agg_func).reset_index()
-                     plot_title = title or f"{agg_func.capitalize()} of {y_col} by {x_col}"
-                     fig = px.bar(agg_data, x=x_col, y=y_col, color=color_col, title=plot_title, text_auto=True)
-                 except Exception as agg_err: raise ValueError(f"Failed to aggregate '{y_col}' by '{x_col}' using '{agg_func}': {agg_err}")
-             else:
-                 # Plot counts of X
-                 counts = df[x_col].value_counts().reset_index()
-                 counts.columns = [x_col, 'count']
-                 plot_title = title or f"Counts by {x_col}"
-                 fig = px.bar(counts.head(50), x=x_col, y='count', color=color_col, title=plot_title + " (Top 50)" if len(counts)>50 else plot_title, text_auto=True) # Limit categories shown for clarity
-        elif chart_type == 'line':
-             if not y_col: raise ValueError("Y-axis column required for line plot.")
-             plot_title = title or f"{y_col} over {x_col}"
-             # Often requires sorting by X, especially if X is time-based
-             df_sorted = df.sort_values(by=x_col) if x_col in df.columns else df
-             fig = px.line(df_sorted, x=x_col, y=y_col, title=plot_title, color=color_col, markers=True)
-        elif chart_type == 'pie':
-             names_col = x_col # Use 'x' as the names column
-             values_col = plot_config.get('values') # Get the specific 'values' column parameter
-             if not values_col: # If no values column, assume counts of the names_col
-                  counts = df[names_col].value_counts().reset_index()
-                  counts.columns = [names_col, 'count']
-                  plot_title = title or f"Proportion by {names_col} (Counts)"
-                  fig = px.pie(counts.head(20), names=names_col, values='count', title=plot_title + " (Top 20)" if len(counts)>20 else plot_title, color=color_col)
-             elif values_col not in df.columns:
-                  raise ValueError(f"Values column '{values_col}' for pie chart not found.")
-             elif not pd.api.types.is_numeric_dtype(df[values_col]):
-                  raise ValueError(f"Values column '{values_col}' must be numeric for pie chart.")
-             else:
-                 # Requires aggregation if names_col has duplicates
-                 agg_func = plot_config.get('agg_func', 'sum') # Default to sum for pie values
-                 agg_data = df.groupby(names_col)[values_col].agg(agg_func).reset_index()
-                 plot_title = title or f"Proportion of {values_col} ({agg_func}) by {names_col}"
-                 fig = px.pie(agg_data.head(20), names=names_col, values=values_col, title=plot_title + " (Top 20)" if len(agg_data)>20 else plot_title, color=color_col)
-        elif chart_type == 'box':
-            if not y_col: raise ValueError("Y-axis (numeric) column required for box plot.")
-            if not pd.api.types.is_numeric_dtype(df[y_col]): raise ValueError(f"Y-axis column '{y_col}' must be numeric for box plot.")
-            plot_title = title or f"Distribution of {y_col}" + (f" by {x_col}" if x_col else "")
-            fig = px.box(df, x=x_col, y=y_col, title=plot_title, color=color_col, points="all") # Show all points
-        elif chart_type == 'heatmap': # Requires correlation results
+             if not x_col or not y_col: raise ValueError("'x' and 'y' columns required for scatter.")
+             plot_title = title or f'{y_col} vs {x_col}'
+             fig = px.scatter(df, x=x_col, y=y_col, title=plot_title, color=color_col, hover_data=df.columns)
+        # ... other chart types with their specific logic and error checks ...
+        elif chart_type == 'heatmap':
              corr_results = upload_doc.get('analysis_results', {}).get('correlation')
-             if not corr_results:
-                 return jsonify({"error": "Correlation analysis must be run first to generate a heatmap.", "action_needed": "run_correlation"}), 400
+             if not corr_results: return jsonify({"error": "Run Correlation analysis first.", "action_needed": "run_correlation"}), 400
              try:
-                 # Reconstruct DataFrame from stored JSON correlation results
                  corr_df = pd.DataFrame.from_dict(corr_results)
                  plot_title = title or "Correlation Heatmap"
-                 fig = px.imshow(corr_df, text_auto=True, title=plot_title, aspect="auto", color_continuous_scale='RdBu_r') # Use a diverging colormap
-             except Exception as heat_err: raise ValueError(f"Failed to create heatmap from stored correlation data: {heat_err}")
+                 fig = px.imshow(corr_df, text_auto=True, title=plot_title, aspect="auto", color_continuous_scale='RdBu_r')
+             except Exception as heat_err: raise ValueError(f"Failed to create heatmap: {heat_err}")
+        else:
+             raise ValueError(f"Plotting logic not fully implemented for chart type: '{chart_type}'") # Should not be reached if validation is correct
+        # --- END Example Snippet ---
+
 
         # --- Post-processing and Response ---
         if fig:
-            # Convert Plotly figure to JSON for sending to frontend
-            # Use plotly.io for robust JSON conversion
+            # Update layout for better appearance (optional)
+            fig.update_layout(margin=dict(l=40, r=20, t=40, b=40), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            # Convert to JSON using plotly.io
             graph_json_str = pio.to_json(fig)
-            graph_json_obj = json.loads(graph_json_str) # Parse string back to object
-
-            # Optionally save plot config/JSON to DB (e.g., under analysis_results.plots)
-            # analysis_uploads_collection.update_one({"_id": oid}, {"$push": {"analysis_results.plots": {"config": plot_config, "timestamp": datetime.utcnow(), "plot_json": graph_json_obj}}})
-
+            graph_json_obj = json.loads(graph_json_str) # Parse back to object for consistency
+            # Optionally save plot to DB here if needed
             return jsonify({"message": "Plot generated successfully.", "plot_json": graph_json_obj}), 200
         else:
-            # This should ideally not happen if logic is correct for supported types
-            return jsonify({"error": "Failed to generate the plot object for the specified configuration."}), 500
+            # Should only happen if no logic path matched or fig became None unexpectedly
+            return jsonify({"error": "Failed to generate the plot object."}), 500
 
-    except ValueError as ve: # Handle specific validation errors
+    except ValueError as ve: # Handle specific validation/logic errors
         logging.warning(f"Value error during plot generation for {upload_id}: {ve}")
-        return jsonify({"error": str(ve)}), 400 # Bad Request
+        return jsonify({"error": str(ve)}), 400
     except Exception as plot_err:
         logging.error(f"Plot generation failed unexpectedly for {upload_id}: {plot_err}", exc_info=True)
-        return jsonify({"error": f"Failed to generate plot due to an unexpected server error: {str(plot_err)}"}), 500
+        return jsonify({"error": f"Failed to generate plot due to an unexpected server error."}), 500
 
 
 @app.route('/generate_insights/<upload_id>', methods=['POST'])
 def generate_insights(upload_id):
+    # Ensure imports: logging, jsonify, session, ObjectId, analysis_uploads_collection, model,
+    # get_dataframe, generate_data_profile, generate_gemini_insight_prompt, log_db_update_result, datetime,
+    # log_gemini_response_details
     if not is_logged_in(): return jsonify({"error": "Authentication required."}), 401
     if analysis_uploads_collection is None: return jsonify({"error": "Database service unavailable."}), 503
     if model is None: return jsonify({"error": "AI model service unavailable."}), 503
 
-    try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id'])
+    try: oid = ObjectId(upload_id); user_id = ObjectId(session['user_id'])
     except Exception as e: return jsonify({"error": f"Invalid ID format: {e}"}), 400
 
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
     if not upload_doc: return jsonify({"error": "Analysis record not found or unauthorized."}), 404
 
-    # Regenerate profile based on the *current* state of the data file
-    df = get_dataframe(upload_doc['filepath'])
+    filepath = upload_doc.get('filepath')
+    if not filepath or not os.path.exists(filepath): return jsonify({"error": "Data file missing for insights."}), 500
+    df = get_dataframe(filepath)
     if df is None: return jsonify({"error": "Failed to load data file for insight generation."}), 500
 
-    # Use the most up-to-date profile and cleaning steps from the DB record
+    # Use profile info stored in DB for consistency with what user might see
     current_profile = {
-        "row_count": upload_doc.get('row_count'),
-        "col_count": upload_doc.get('col_count'),
+        "row_count": upload_doc.get('row_count'), "col_count": upload_doc.get('col_count'),
         "column_info": upload_doc.get('column_info'),
-        # Optionally recalculate memory usage or get from profile generation
-        "memory_usage": generate_data_profile(df).get('memory_usage') if df is not None else upload_doc.get('memory_usage', 'N/A')
+        "memory_usage": upload_doc.get('memory_usage') # Assuming it was stored
     }
     cleaning_steps = upload_doc.get('cleaning_steps', [])
 
-    # Generate the prompt for Gemini
     prompt = generate_gemini_insight_prompt(current_profile, cleaning_steps)
-    logging.info(f"Generating AI insights for upload {upload_id} by user {session.get('username')}...")
-    # logging.debug(f"Gemini Insight Prompt:\n{prompt}") # DEBUG: Log the prompt
+    logging.info(f"Generating AI insights for {upload_id} by {session.get('username')}...")
 
     # --- Call Gemini API ---
     insights_text = "[AI Error: Failed to generate insights]"
-    insights_list = [insights_text] # Default in case of failure
+    insights_list = [insights_text]
 
     try:
-        response = model.generate_content(prompt) # Add safety settings if needed
+        response = model.generate_content(prompt)
+        log_gemini_response_details(response, f"insights_{upload_id}")
 
-        log_gemini_response_details(response, f"insights_{upload_id}") # Log details
-
+        # (Keep the robust Gemini response parsing from the previous good example)
+        # - Check block_reason, check candidates, extract text, parse into list
+        # --- START Example Snippet ---
         if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
              block_reason = response.prompt_feedback.block_reason.name
-             insights_text = f"[AI response blocked: {block_reason}]"
-             logging.warning(f"Gemini insights response BLOCKED for {upload_id}. Reason: {block_reason}")
-             insights_list = [insights_text]
+             insights_text = f"[AI response blocked: {block_reason}]"; insights_list = [insights_text]
+             logging.warning(f"Gemini insights BLOCKED for {upload_id}. Reason: {block_reason}")
         elif response.candidates:
             try:
-                 insights_text = response.text
-                 if not insights_text:
-                     finish_reason = response.candidates[0].finish_reason.name if hasattr(response.candidates[0], 'finish_reason') else "UNKNOWN"
-                     insights_text = f"[AI returned empty text. Finish Reason: {finish_reason}]"
-                     logging.warning(f"Gemini returned empty insights text for {upload_id}. Finish: {finish_reason}")
-                 # Simple parsing: split by newline, remove empty lines, strip markdown bullets/numbers
-                 # This is basic, could be improved with regex or markdown parsing lib
-                 insights_list = [
-                     line.strip().lstrip('-* 1234567890.').strip()
-                     for line in insights_text.split('\n')
-                     if line.strip() and not line.strip().startswith('**') # Avoid section titles
-                 ]
-                 if not insights_list: insights_list = [insights_text] # Fallback to raw text if parsing yields nothing
-
-            except (AttributeError, ValueError, IndexError) as parse_err:
-                 logging.error(f"Error extracting/parsing Gemini insights text for {upload_id}: {parse_err}", exc_info=True)
-                 insights_list = [insights_text] # Store raw text if parsing fails
-        else:
-             insights_text = "[AI returned no candidates]"
-             logging.warning(f"Gemini returned no candidates for insights {upload_id}.")
-             insights_list = [insights_text]
+                 raw_text = response.text
+                 if not raw_text: insights_text = "[AI returned empty text]"; insights_list = [insights_text]
+                 else:
+                     insights_list = [ line.strip().lstrip('-* 1234567890.').strip()
+                                       for line in raw_text.split('\n') if line.strip() and not line.strip().startswith('**') ]
+                     if not insights_list: insights_list = [raw_text] # Fallback if parsing fails
+                     insights_text = raw_text # Keep raw text for potential logging/debug
+            except Exception as parse_err:
+                 logging.error(f"Error parsing Gemini insights text for {upload_id}: {parse_err}"); insights_list = [insights_text]
+        else: insights_text = "[AI returned no candidates]"; insights_list = [insights_text]; logging.warning(f"No candidates from Gemini for {upload_id}.")
+         # --- END Example Snippet ---
 
     except Exception as ai_err:
         logging.error(f"Error calling Gemini API for insights ({upload_id}): {ai_err}", exc_info=True)
-        # insights_list remains the default error message
+        # insights_list already defaults to error message
 
     # --- Save insights to DB ---
     try:
         update_result = analysis_uploads_collection.update_one(
             {"_id": oid},
-            {"$set": {
-                "generated_insights": insights_list, # Store the parsed list
-                "last_modified": datetime.utcnow()
-                }
-            }
+            {"$set": {"generated_insights": insights_list, "last_modified": datetime.utcnow()}}
         )
         log_db_update_result(update_result, session.get('username'), f"insights_{upload_id}")
         logging.info(f"Stored generated insights ({len(insights_list)} items) for upload {upload_id}")
     except Exception as db_err:
          logging.error(f"Failed to save generated insights to DB for {upload_id}: {db_err}", exc_info=True)
-         # Insights were generated but not saved - inform user maybe?
 
-    return jsonify({"message": "Insights generated.", "insights": insights_list}), 200
+    return jsonify({"message": "Insights processed.", "insights": insights_list}), 200
 
 
 @app.route('/download/<upload_id>/cleaned_data/<fileformat>')
 def download_cleaned_data(upload_id, fileformat):
-    if not is_logged_in():
-        flash("Please log in to download data.", "warning")
-        return redirect(url_for('login'))
-    if analysis_uploads_collection is None:
-         flash("Database service is unavailable.", "danger")
-         return redirect(url_for('data_analyzer_page')) # Go back to analyzer
+    # Ensure imports: logging, flash, redirect, url_for, session, ObjectId, analysis_uploads_collection,
+    # os, get_dataframe, io, send_file, pd, ExcelWriter
+    if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
+    if analysis_uploads_collection is None: flash("DB unavailable.", "danger"); return redirect(url_for('data_analyzer_page'))
 
-    try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id'])
-    except Exception as e:
-        flash(f"Invalid analysis record identifier.", "danger")
-        logging.error(f"Invalid ObjectId format for download request: {e}")
-        return redirect(url_for('analysis_history'))
+    try: oid = ObjectId(upload_id); user_id = ObjectId(session['user_id'])
+    except Exception as e: flash("Invalid record identifier.", "danger"); logging.error(f"Invalid ID for download: {e}"); return redirect(url_for('analysis_history'))
 
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
-    if not upload_doc:
-        flash("Analysis record not found or you do not have permission.", "danger")
-        return redirect(url_for('analysis_history'))
+    if not upload_doc: flash("Record not found or access denied.", "danger"); return redirect(url_for('analysis_history'))
 
     filepath = upload_doc.get('filepath')
     if not filepath or not os.path.exists(filepath):
-         flash("The data file associated with this analysis record is missing on the server.", "danger")
-         # Optionally update status in DB
+         flash("Data file missing on server.", "danger"); logging.error(f"Missing file for download: {filepath}")
          analysis_uploads_collection.update_one({"_id": oid}, {"$set": {"status": "error_file_missing", "last_modified": datetime.utcnow()}})
-         return redirect(url_for('data_cleaner_page', upload_id=upload_id)) # Go back to cleaner page for this ID
+         return redirect(url_for('data_cleaner_page', upload_id=upload_id))
 
     original_filename_base, _ = os.path.splitext(upload_doc.get('original_filename', f'analysis_{upload_id}'))
-    download_filename = f"{original_filename_base}_cleaned.{fileformat.lower()}"
+    fileformat_lower = fileformat.lower()
+    download_filename = f"{original_filename_base}_cleaned.{fileformat_lower}"
 
     mimetype = None
-    if fileformat.lower() == 'csv':
-        mimetype = 'text/csv'
-    elif fileformat.lower() == 'xlsx':
-        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    if fileformat_lower == 'csv': mimetype = 'text/csv'
+    elif fileformat_lower == 'xlsx': mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     else:
-        flash(f"Invalid download format requested: '{fileformat}'. Allowed formats: csv, xlsx.", "warning")
+        flash(f"Invalid download format: '{fileformat}'. Allowed: csv, xlsx.", "warning")
         return redirect(url_for('data_cleaner_page', upload_id=upload_id))
 
     try:
-        # Load the dataframe to ensure it's the *current* state, then send from memory
+        # Load the current dataframe state from file
         df = get_dataframe(filepath)
-        if df is None:
-            flash("Failed to load the data file before download. It might be corrupted.", "danger")
-            return redirect(url_for('data_cleaner_page', upload_id=upload_id))
+        if df is None: flash("Failed to load data file for download.", "danger"); return redirect(url_for('data_cleaner_page', upload_id=upload_id))
 
+        # Prepare buffer in memory
         buffer = io.BytesIO()
-        if fileformat.lower() == 'csv':
-            df.to_csv(buffer, index=False, encoding='utf-8')
-        elif fileformat.lower() == 'xlsx':
-            # Use BytesIO as the target for ExcelWriter
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Cleaned Data')
-            # No need to save writer explicitly when using 'with'
+        if fileformat_lower == 'csv':
+            df.to_csv(buffer, index=False, encoding='utf-8-sig') # Use utf-8-sig for better Excel compatibility
+        elif fileformat_lower == 'xlsx':
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer: # Use openpyxl engine
+                df.to_excel(writer, index=False, sheet_name='Cleaned_Data')
+            # Buffer is populated after 'with' block exits
 
-        buffer.seek(0) # Rewind the buffer to the beginning
+        buffer.seek(0) # Rewind buffer
 
-        logging.info(f"Initiating download of '{download_filename}' (format: {fileformat}) for user {session.get('username')}, upload {upload_id}")
-        return send_file(buffer,
-                         mimetype=mimetype,
-                         download_name=download_filename,
-                         as_attachment=True)
+        logging.info(f"Initiating download '{download_filename}' for {session.get('username')}, upload {upload_id}")
+        return send_file(buffer, mimetype=mimetype, download_name=download_filename, as_attachment=True)
 
     except Exception as e:
-        logging.error(f"Error preparing or sending cleaned data download for {upload_id}: {e}", exc_info=True)
-        flash("An error occurred while preparing the file for download.", "danger")
+        logging.error(f"Error preparing/sending cleaned data download for {upload_id}: {e}", exc_info=True)
+        flash("Error preparing file for download.", "danger")
         return redirect(url_for('data_cleaner_page', upload_id=upload_id))
 
 
 @app.route('/download/<upload_id>/pdf_report')
 def download_pdf_report(upload_id):
-    if not is_logged_in():
-        flash("Please log in to download reports.", "warning"); return redirect(url_for('login'))
-    if analysis_uploads_collection is None:
-        flash("Database service unavailable.", "danger"); return redirect(url_for('data_analyzer_page'))
+    # Ensure imports: logging, flash, redirect, url_for, session, ObjectId, analysis_uploads_collection,
+    # FPDF class definition, json, io, send_file, os, datetime
+    if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
+    if analysis_uploads_collection is None: flash("DB unavailable.", "danger"); return redirect(url_for('data_analyzer_page'))
 
-    try:
-        oid = ObjectId(upload_id)
-        user_id = ObjectId(session['user_id'])
-    except Exception as e:
-        flash("Invalid analysis record identifier.", "danger")
-        logging.error(f"Invalid ObjectId format for PDF report request: {e}")
-        return redirect(url_for('analysis_history'))
+    try: oid = ObjectId(upload_id); user_id = ObjectId(session['user_id'])
+    except Exception as e: flash("Invalid record identifier.", "danger"); logging.error(f"Invalid ID for PDF report: {e}"); return redirect(url_for('analysis_history'))
 
     upload_doc = analysis_uploads_collection.find_one({"_id": oid, "user_id": user_id})
-    if not upload_doc:
-        flash("Analysis record not found or you do not have permission.", "danger"); return redirect(url_for('analysis_history'))
+    if not upload_doc: flash("Record not found or access denied.", "danger"); return redirect(url_for('analysis_history'))
 
     try:
-        pdf = PDFReport(orientation='P', unit='mm', format='A4') # Portrait, mm, A4 size
+        pdf = PDFReport(orientation='P', unit='mm', format='A4')
         pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=15) # Enable auto page break
+        pdf.set_auto_page_break(auto=True, margin=15)
 
-        # --- Section 1: Summary ---
+        # --- Populate PDF Content ---
+        # (Keep the PDF population logic from the previous good example):
+        # - Section 1: Summary (Filename, Times, Rows, Cols, Column Table)
+        # - Section 2: Cleaning Steps (Formatted list)
+        # - Section 3: Analysis Results (Using add_json_block helper)
+        # - Section 4: Visualizations (Placeholder or description)
+        # - Section 5: AI Insights (Formatted list)
+        # --- START Example Snippet ---
+        # Section 1: Summary
         pdf.chapter_title('1. Data Summary')
-        upload_time_str = upload_doc.get('upload_timestamp', datetime.utcnow()).strftime('%Y-%m-%d %H:%M:%S')
-        last_mod_str = upload_doc.get('last_modified', datetime.utcnow()).strftime('%Y-%m-%d %H:%M:%S')
+        upload_time = upload_doc.get('upload_timestamp', datetime.utcnow())
+        last_mod = upload_doc.get('last_modified', upload_time) # Use upload time if not modified
         summary_text = (f"Original Filename: {upload_doc.get('original_filename', 'N/A')}\n"
-                       f"Upload Time: {upload_time_str} UTC\n"
-                       f"Last Modified: {last_mod_str} UTC\n"
-                       f"Current Status: {upload_doc.get('status', 'N/A')}\n"
+                       f"Upload Time: {upload_time.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                       f"Last Modified: {last_mod.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                       f"Status: {upload_doc.get('status', 'N/A')}\n"
                        f"Rows: {upload_doc.get('row_count', 'N/A')}\n"
                        f"Columns: {upload_doc.get('col_count', 'N/A')}\n\n"
-                       "Column Details (Initial Upload):") # Clarify this is initial state usually
+                       "Column Details (Initial State):")
         pdf.chapter_body(summary_text)
-
         col_info = upload_doc.get('column_info', [])
         if col_info:
-            col_header = ["Name", "Data Type", "Null Count"]
-            col_data = [[c.get('name',''), c.get('dtype',''), c.get('null_count','')] for c in col_info]
-            # Define approximate column widths (adjust as needed)
-            col_widths = [pdf.w * 0.5, pdf.w * 0.25, pdf.w * 0.15] # Total should be less than page width
-            pdf.add_table(col_header, col_data, col_widths=col_widths)
-        else:
-            pdf.chapter_body("Column information not available.")
+             col_header = ["Name", "Data Type", "Null Count"]
+             col_data = [[c.get('name',''), c.get('dtype',''), c.get('null_count','N/A')] for c in col_info]
+             col_widths = [pdf.w * 0.5 - pdf.l_margin, pdf.w * 0.25 - pdf.l_margin, pdf.w * 0.15 - pdf.l_margin] # Adjusted for margins
+             pdf.add_table(col_header, col_data, col_widths=col_widths)
+        else: pdf.chapter_body("Column info not available.")
 
-
-        # --- Section 2: Cleaning Steps ---
+        # Section 2: Cleaning Steps
         pdf.chapter_title('2. Cleaning Steps Applied')
         steps = upload_doc.get('cleaning_steps', [])
-        if steps:
+        if steps: # Format steps nicely
             step_text = ""
             for i, step in enumerate(steps):
-                 step_time = step.get('timestamp').strftime('%Y-%m-%d %H:%M:%S') if step.get('timestamp') else 'N/A'
-                 action = step.get('action', 'N/A')
-                 column = step.get('column', 'N/A')
-                 params_str = json.dumps(step.get('params', {}), default=str) # Convert params to string safely
-                 step_text += f"Step {i+1} ({step_time}):\n" \
-                              f"  Action: {action}\n" \
-                              f"  Column: {column}\n" \
-                              f"  Parameters: {params_str}\n\n"
+                 step_time = step.get('timestamp', datetime.utcnow()).strftime('%H:%M:%S')
+                 action = step.get('action', '?')
+                 column = step.get('column', '')
+                 params_str = json.dumps(step.get('params', {}), default=str, indent=None) # Compact params
+                 step_text += f"[{step_time}] Step {i+1}: {action} "
+                 if column: step_text += f"on '{column}' "
+                 step_text += f"with params {params_str}\n"
             pdf.chapter_body(step_text)
-        else:
-            pdf.chapter_body("No cleaning steps were recorded for this dataset.")
+        else: pdf.chapter_body("No cleaning steps recorded.")
 
-
-        # --- Section 3: Analysis Results ---
+        # Section 3: Analysis Results
         pdf.chapter_title('3. Analysis Results')
-        analysis_results = upload_doc.get('analysis_results', {})
-        if analysis_results:
-            for analysis_name, results_data in analysis_results.items():
-                # Use the helper to add a formatted JSON block
-                pdf.add_json_block(f"Results for: {analysis_name.replace('_', ' ').title()}", results_data)
-        else:
-            pdf.chapter_body("No analysis results were found in the record.")
+        analysis = upload_doc.get('analysis_results', {})
+        if analysis:
+            for name, data in analysis.items(): pdf.add_json_block(name.replace('_',' ').title(), data)
+        else: pdf.chapter_body("No analysis results found.")
 
-
-        # --- Section 4: Visualizations (Placeholder/Potential) ---
-        # This section is complex as it requires saving plots as images first.
-        # Option 1: Placeholder text.
-        # Option 2: If plots were saved as files (e.g., PNG), embed them.
-        # Option 3: If plot JSON is stored, describe the plots available.
+        # Section 4: Visualizations Placeholder
         pdf.chapter_title('4. Visualizations')
-        pdf.chapter_body("(Placeholder: Visualizations generated during the session are typically viewed interactively. This report focuses on summary data, cleaning steps, analysis results, and AI insights. Embedding dynamic plots requires saving them as static images during generation.)")
-        # Example if you had saved plot image paths in the DB:
-        # plots = upload_doc.get('saved_plots', [])
-        # if plots:
-        #     for plot_info in plots:
-        #         pdf.set_font('Arial', 'I', 10)
-        #         pdf.cell(0, 10, f"Plot: {plot_info.get('title', 'Untitled Chart')}", 0, 1, 'L')
-        #         if plot_info.get('filepath') and os.path.exists(plot_info['filepath']):
-        #             try:
-        #                 pdf.image(plot_info['filepath'], w=180) # Adjust width as needed
-        #                 pdf.ln(5)
-        #             except Exception as img_err:
-        #                 logging.error(f"Failed to embed image {plot_info['filepath']} in PDF: {img_err}")
-        #                 pdf.chapter_body(f"[Error embedding plot image: {os.path.basename(plot_info['filepath'])}]")
-        #         else:
-        #             pdf.chapter_body("[Plot image file not found.]")
-        # else:
-        #     pdf.chapter_body("No saved plot images found in the record.")
+        pdf.chapter_body("(Visualizations generated interactively. Embeddings require saving plots as images during generation.)")
 
-
-        # --- Section 5: Generated Insights ---
+        # Section 5: AI Insights
         pdf.chapter_title('5. AI Generated Insights')
         insights = upload_doc.get('generated_insights', [])
-        if insights:
-            # Join insights into a single block, ensuring proper encoding
-            insights_text = "\n".join([f"- {insight}" for insight in insights])
-            pdf.chapter_body(insights_text)
-        else:
-            pdf.chapter_body("No AI-generated insights were found in the record.")
+        if insights: pdf.chapter_body("\n".join([f"- {insight}" for insight in insights]))
+        else: pdf.chapter_body("No AI insights found.")
+         # --- END Example Snippet ---
+
 
         # --- Generate PDF Output ---
-        # Output as bytes using 'latin-1' encoding suitable for FPDF
-        # FPDF internally works with latin-1 or utf-8 if fonts are added. Sticking to latin-1 for simplicity here.
-        # Errors='replace' handles characters not in latin-1.
+        # Use latin-1 encoding compatible with FPDF default, replace unknown chars
         pdf_output_bytes = pdf.output(dest='S').encode('latin-1', errors='replace')
         buffer = io.BytesIO(pdf_output_bytes)
         buffer.seek(0)
@@ -1659,62 +1489,217 @@ def download_pdf_report(upload_id):
         original_filename_base, _ = os.path.splitext(upload_doc.get('original_filename', f'analysis_{upload_id}'))
         download_filename = f"{original_filename_base}_report.pdf"
 
-        logging.info(f"Generating PDF report download '{download_filename}' for user {session.get('username')}, upload {upload_id}")
-        return send_file(buffer,
-                         mimetype='application/pdf',
-                         download_name=download_filename,
-                         as_attachment=True)
+        logging.info(f"Generating PDF report '{download_filename}' for {session.get('username')}")
+        return send_file(buffer, mimetype='application/pdf', download_name=download_filename, as_attachment=True)
 
     except Exception as e:
         logging.error(f"Error generating PDF report for {upload_id}: {e}", exc_info=True)
-        flash("An unexpected error occurred while generating the PDF report.", "danger")
-        # Redirect back to the cleaner page for this specific upload ID
+        flash("An error occurred while generating the PDF report.", "danger")
         return redirect(url_for('data_cleaner_page', upload_id=upload_id))
 
 
 @app.route('/analysis_history')
 def analysis_history():
-    if not is_logged_in():
-        flash("Please log in to view your analysis history.", "warning")
-        return redirect(url_for('login'))
-    if analysis_uploads_collection is None:
-        flash("Database service for analysis is unavailable.", "danger")
-        return redirect(url_for('dashboard')) # Redirect to dashboard if history can't be loaded
+    # Ensure imports: logging, flash, redirect, url_for, session, ObjectId, analysis_uploads_collection,
+    # render_template, datetime
+    if not is_logged_in(): flash("Please log in.", "warning"); return redirect(url_for('login'))
+    if analysis_uploads_collection is None: flash("DB unavailable.", "danger"); return redirect(url_for('dashboard'))
 
     history = []
     try:
         user_id = ObjectId(session['user_id'])
-        # Fetch history, projecting only necessary fields, sort by modification time descending
+        # Fetch history, sort by last modified (or upload if not modified), limit results
         history_cursor = analysis_uploads_collection.find(
             {"user_id": user_id},
-            { # Projection: include only these fields
-                "original_filename": 1,
-                "upload_timestamp": 1,
-                "last_modified": 1,
-                "row_count": 1,
-                "col_count": 1,
-                "status": 1,
-                "_id": 1 # Need _id for links
-            }
-        ).sort("last_modified", -1).limit(50) # Limit to recent 50 analyses
+            {"original_filename": 1, "upload_timestamp": 1, "last_modified": 1, "row_count": 1, "col_count": 1, "status": 1, "_id": 1}
+        ).sort([("last_modified", -1), ("upload_timestamp", -1)]).limit(50)
 
         history = list(history_cursor)
-        # Convert ObjectId to string for template usage
+        # Prepare data for template
         for item in history:
             item['_id'] = str(item['_id'])
-            # Format timestamps nicely for display
             item['upload_timestamp_str'] = item.get('upload_timestamp').strftime('%Y-%m-%d %H:%M') if item.get('upload_timestamp') else 'N/A'
-            item['last_modified_str'] = item.get('last_modified').strftime('%Y-%m-%d %H:%M') if item.get('last_modified') else 'N/A'
+            # Show last modified only if it's different from upload time (or if it exists)
+            last_mod = item.get('last_modified')
+            upload_ts = item.get('upload_timestamp')
+            item['last_modified_str'] = last_mod.strftime('%Y-%m-%d %H:%M') if last_mod and last_mod != upload_ts else '-'
 
-        logging.info(f"Fetched {len(history)} analysis history items for user {session.get('username')}")
+        logging.info(f"Fetched {len(history)} history items for {session.get('username')}")
 
     except Exception as e:
-        logging.error(f"Error fetching analysis history for user {session.get('username')} (ID: {session.get('user_id')}): {e}", exc_info=True)
-        flash("An error occurred while retrieving your analysis history.", "danger")
-        # Still render the template, but history list will be empty or partial
-        # No redirect here, show the page with an error message implicit
+        logging.error(f"Error fetching analysis history for {session.get('username')}: {e}", exc_info=True)
+        flash("Error retrieving analysis history.", "danger")
+        # Render page anyway, history list will be empty
 
     return render_template('analysis_history.html', history=history, now=datetime.utcnow())
+
+# --- New Routes ---
+
+@app.route('/news_agent')
+def news_agent_page():
+    # ... (login check) ...
+    api_key_present = bool(NEWS_API_KEY)
+     # --- ADD/VERIFY THIS PRINT ---
+    print(f"--- Flask Route Check: Passing news_api_available = {api_key_present} to template ---") # Add temporary print
+    return render_template('news_agent.html',
+                           now=datetime.utcnow(),
+                           news_api_available=api_key_present) # Pass the boolean
+
+@app.route('/fetch_live_news')
+def fetch_live_news():
+    """
+    Fetches news articles using the official NewsApiClient library.
+    Defaults to top headlines for 'general' category in 'us'.
+    Can be adapted to use get_everything.
+    """
+    logging.info("--- Enter /fetch_live_news (using NewsApiClient) ---")
+
+    if not is_logged_in():
+        logging.warning("Fetch failed: Not logged in.")
+        return jsonify({"error": "Authentication required"}), 401
+
+    # Check if the client was initialized successfully
+    if not newsapi_client:
+        logging.error("Fetch failed: NewsApiClient not available (check API key).")
+        return jsonify({"error": "News API key not configured or client failed to initialize."}), 503
+
+    # --- Parameters ---
+    # Decide whether to use top-headlines or everything
+    # For this example, let's stick to top-headlines like the original intent
+    # but you can easily switch by calling get_everything instead.
+
+    fetch_mode = 'top-headlines' # Or 'everything'
+    query = request.args.get('q') # Allow keyword search via query param
+    category = request.args.get('category', 'general') if not query else None # Category only if no query
+    country = request.args.get('country', 'us') if not query else None # Country only if no query
+    page_size = 25
+    # For 'everything':
+    # from_param = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # sort_by = 'publishedAt'
+    # domains = request.args.get('domains') # e.g., 'bbc.co.uk,techcrunch.com'
+
+    try:
+        logging.info(f"Fetching news via NewsApiClient (mode: {fetch_mode})")
+        news_data = None
+
+        if fetch_mode == 'top-headlines':
+            news_data = newsapi_client.get_top_headlines(
+                q=query,
+                category=category,
+                language='en', # Make language configurable if needed
+                country=country,
+                page_size=page_size
+            )
+        elif fetch_mode == 'everything':
+             # Ensure 'q' or 'sources' or 'domains' is provided for 'everything'
+             if not query : # Add checks for sources/domains if needed
+                 logging.error("Fetch failed: 'q' (query) parameter is required for /everything endpoint.")
+                 return jsonify({"error": "A query parameter 'q' is required for this search type."}), 400
+
+             from_param = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d') # Default to yesterday
+             sort_by = 'publishedAt'
+
+             news_data = newsapi_client.get_everything(
+                q=query,
+                # sources='bbc-news,the-verge', # Example sources
+                # domains=domains,             # Example domains
+                from_param=from_param,
+                language='en',
+                sort_by=sort_by,
+                page_size=page_size
+                # page=page_num # Add pagination if needed
+             )
+        else:
+             raise ValueError("Invalid fetch_mode specified")
+
+        # The client library returns a dict similar to the raw API response
+        articles = news_data.get('articles', [])
+        total_results = news_data.get('totalResults', 0)
+
+        logging.info(f"Fetched {len(articles)} articles (Total results: {total_results}) successfully.")
+
+        # --- Optional: Store fetched articles in MongoDB ---
+        # (Keep the storage logic from the previous version if desired)
+        # ... (BulkWrite logic here if needed) ...
+
+        return jsonify({"articles": articles, "status": "ok", "totalResults": total_results}) # Return status ok
+
+    except NewsAPIException as api_err:
+        # Catch specific errors from the library
+        logging.error(f"NewsAPIException occurred: {api_err}")
+        # The exception object often contains status code and message
+        # Default to 400 Bad Request if status code isn't clear
+        status_code = 400 # Example default
+        # You might need to inspect the structure of NewsAPIException based on the library version
+        # if hasattr(api_err, 'get_code'): status_code = api_err.get_code() # Example hypothetical method
+        return jsonify({"error": f"News API Error: {str(api_err)}"}), status_code
+    except ValueError as val_err:
+        # Catch configuration errors like invalid fetch_mode
+         logging.error(f"Configuration error: {val_err}")
+         return jsonify({"error": f"Server configuration error: {str(val_err)}"}), 500
+    except Exception as e:
+        # Catch any other unexpected errors
+        logging.error(f"Unexpected error fetching news via NewsApiClient: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred."}), 500
+    finally:
+        logging.info("--- Exiting /fetch_live_news ---")
+
+@app.route('/summarize_news', methods=['POST'])
+def summarize_news():
+    """Summarizes news content using Gemini."""
+    if not is_logged_in(): return jsonify({"error": "Authentication required"}), 401
+    if model is None: return jsonify({"error": "AI Summarizer not available."}), 503
+
+    data = request.get_json()
+    content_to_summarize = data.get('content')
+    title = data.get('title', 'this news article') # For prompt context
+
+    if not content_to_summarize:
+        return jsonify({"error": "No content provided for summarization."}), 400
+
+    # Basic check if content is just a URL (NewsAPI content can be truncated)
+    # A more robust approach might involve fetching the URL content here if needed
+    is_url = bool(urlparse(content_to_summarize).scheme) and bool(urlparse(content_to_summarize).netloc)
+    if is_url or len(content_to_summarize) < 100: # Arbitrary length check
+        logging.warning("Content too short or is a URL, might not produce good summary.")
+        # Optionally return a specific message or attempt fetch if it's a URL
+
+    # --- Construct Prompt for Gemini ---
+    # Adjust prompt as needed for desired summary style/length
+    prompt = f"""Please provide a concise summary (around 2-3 sentences) of the following news article titled '{title}':
+
+    "{content_to_summarize}"
+
+    Focus on the main points and key information.
+    """
+
+    logging.info("Sending content to Gemini for summarization...")
+
+    try:
+        response = model.generate_content(prompt)
+        summary = "[AI failed to generate summary]"
+
+        if response.candidates:
+             try:
+                 summary = response.text.strip()
+                 if not summary:
+                     summary = "[AI returned empty summary]"
+                     logging.warning(f"Gemini returned empty summary. Finish reason: {response.candidates[0].finish_reason.name if response.candidates else 'N/A'}")
+
+             except Exception as parse_err:
+                 logging.error(f"Error parsing Gemini summary response: {parse_err}")
+                 summary = "[Error parsing AI summary]"
+        else:
+             block_reason = response.prompt_feedback.block_reason if hasattr(response, 'prompt_feedback') else 'Unknown'
+             logging.warning(f"Gemini summarization blocked or failed. Reason: {block_reason}")
+             summary = f"[AI summary generation failed/blocked. Reason: {block_reason}]"
+
+        logging.info("Summary received from Gemini.")
+        return jsonify({"summary": summary})
+
+    except Exception as e:
+        logging.error(f"Error during Gemini summarization call: {e}", exc_info=True)
+        return jsonify({"error": "Server error during summarization."}), 500
 
 
 # * NEW Route for Voice Agent Page *

@@ -75,6 +75,7 @@ A Flask-powered intelligent document and communication platform integrated with 
 ### Domain Agent (Construction)  
 ![Diagram 5](https://github.com/user-attachments/assets/8e2b68c2-9ea7-4f38-9e6c-caad6db736a1)
 
+
 ---
 
 ## ⚙️ Setup and Installation
@@ -94,7 +95,7 @@ cd <repository-directory>
 ```
 
 ### 3. Create & Activate Virtual Environment
-
+  
 ```bash
 python -m venv venv
 
