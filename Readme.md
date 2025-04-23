@@ -1,7 +1,7 @@
 
 ---
 
-# ✨ AI Note System & Multi-Agent Platform 📝🤖🗣️
+# ✨ vision Ai Studio & Multi-Agent Platform 📝🤖🗣️
 
 A Flask-powered intelligent document and communication platform integrated with Google's Gemini AI. This system provides real-time text analytics, multilingual voice chat, PDF comprehension, and industry-specific AI agents for structured business and educational support.
 
