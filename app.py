@@ -29,7 +29,6 @@ import plotly.express as px # Example using Plotly for visualizations
 import plotly.io as pio # To convert Plotly figs to JSON
 import requests
 from urllib.parse import urlparse # To check if content is a URL
-from newsapi.newsapi_exception import NewsAPIException # Import specific exception
 
 
 # --- Flask-Dance Imports (Only Google) ---
@@ -51,6 +50,8 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
     logging.info(f"Created upload directory: {UPLOAD_FOLDER}")
 
+
+
 # --- Flask App Initialization ---
 app = Flask(__name__, template_folder='src/templates', static_folder='src/static')
 
@@ -64,7 +65,9 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # --- Data Analyzer Constants ---
 ANALYSIS_UPLOAD_FOLDER = os.path.join(app.config['UPLOAD_FOLDER'], 'analysis_data')
-ALLOWED_ANALYSIS_EXTENSIONS = {'xlsx', 'csv'}
+ALLOWED_EXTENSIONS = {'csv', 'xls', 'xlsx'}
+def allowed_analysis_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 if not os.path.exists(ANALYSIS_UPLOAD_FOLDER):
     os.makedirs(ANALYSIS_UPLOAD_FOLDER)
@@ -72,9 +75,6 @@ if not os.path.exists(ANALYSIS_UPLOAD_FOLDER):
 
 
 # --- Get API Key (remains the same) ---
-load_dotenv()
-NEWS_API_KEY = os.getenv("NEWS_API_ORG_API_KEY")
-print(f"--- Flask STARTUP Check: NEWS_API_KEY loaded as: '{NEWS_API_KEY}' ---")
 
 # Comment out PREFERRED_URL_SCHEME as we are forcing the redirect_uri now
 # app.config['PREFERRED_URL_SCHEME'] = 'https'
@@ -186,6 +186,15 @@ if api_key:
     try: genai.configure(api_key=api_key); safety_settings=[{"category":c,"threshold":"BLOCK_MEDIUM_AND_ABOVE"}for c in ["HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH","HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]]; model=genai.GenerativeModel(model_name,safety_settings=safety_settings); logging.info(f"Gemini model '{model_name}' init.")
     except Exception as e:logging.error(f"Error init Gemini: {e}")
 else:logging.warning("GEMINI_API_KEY not found.")
+
+# Option 2: Keep fallback but log clearly if it's used
+fallback_key = "MTDrUuB40hsh8vr68q7KDqV9PysQ4czz" # For testing ONLY
+WORLD_NEWS_API_KEY = os.getenv("WORLD_NEWS_API_KEY")
+if not WORLD_NEWS_API_KEY:
+    logging.warning("!!! WORLD_NEWS_API_KEY not found in environment. Using fallback key for testing. !!!")
+    WORLD_NEWS_API_KEY = fallback_key
+# --- Use the CORRECT endpoint for searching ---
+api_endpoint = "https://api.worldnewsapi.com/search-news"
 
 
 # --- Authentication Helpers ---
@@ -743,120 +752,79 @@ def data_analyzer_page():
 
 @app.route('/upload_analysis_data', methods=['POST'])
 def upload_analysis_data():
-    # Ensure necessary imports like logging, jsonify, request, session, ObjectId, secure_filename, os are available
-    # Ensure analysis_uploads_collection, ANALYSIS_UPLOAD_FOLDER are accessible
     logging.info("--- Enter /upload_analysis_data ---")
 
     if not is_logged_in():
-        logging.warning("Upload attempt failed: Not logged in.")
         return jsonify({"error": "Authentication required."}), 401
 
     if analysis_uploads_collection is None:
-        logging.error("Upload attempt failed: Database service unavailable.")
         return jsonify({"error": "Database service unavailable."}), 503
 
     if 'analysisFile' not in request.files:
-        logging.warning("Upload attempt failed: 'analysisFile' not in request.files.")
         return jsonify({"error": "No file part named 'analysisFile' found in the request."}), 400
 
     file = request.files['analysisFile']
 
     if file.filename == '':
-        logging.warning("Upload attempt failed: No file selected (filename is empty).")
         return jsonify({"error": "No file selected."}), 400
 
-    # Check allowed extensions using the helper function
     if not allowed_analysis_file(file.filename):
-        logging.warning(f"Upload attempt failed: Invalid file type - {file.filename}")
         return jsonify({"error": f"Invalid file type. Allowed: {', '.join(ALLOWED_ANALYSIS_EXTENSIONS)}"}), 400
 
-    logging.info(f"Processing uploaded file: {file.filename}")
-
-    # --- Session and File Path Setup ---
     try:
         user_id = ObjectId(session['user_id'])
         username = session.get('username', 'Unknown')
     except Exception as session_err:
-        logging.error(f"Session error during upload: {session_err}", exc_info=True)
+        logging.error(f"Session error: {session_err}", exc_info=True)
         return jsonify({"error": "Invalid session."}), 401
 
     original_filename = secure_filename(file.filename)
     _, f_ext = os.path.splitext(original_filename)
     ts = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     stored_filename = f"{user_id}_{ts}{f_ext}"
-    filepath = os.path.join(ANALYSIS_UPLOAD_FOLDER, stored_filename)
-    logging.info(f"Generated filepath: {filepath}")
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], stored_filename)
 
-    # --- Main Processing Block ---
     try:
-        # Save File
-        logging.info("Attempting to save file...")
         file.save(filepath)
-        logging.info(f"File saved successfully: {filepath}")
-
-        # Read DataFrame using helper (handles errors internally)
-        logging.info("Attempting to read dataframe...")
         df = get_dataframe(filepath)
         if df is None:
-            # get_dataframe already logged the error, cleanup and return
-            if os.path.exists(filepath):
-                 try: os.remove(filepath)
-                 except OSError as rm_err: logging.error(f"Failed cleanup {filepath}: {rm_err}")
-            return jsonify({"error": "Failed to read or unsupported file format after saving."}), 400
-        logging.info("Dataframe read successfully.")
+            os.remove(filepath)
+            return jsonify({"error": "Failed to read or unsupported file format."}), 400
 
-        # Generate Profile
-        logging.info("Generating data profile...")
         profile = generate_data_profile(df)
-        logging.info("Data profile generated.")
 
-        # Prepare DB Document
         doc = {
             "user_id": user_id, "username": username,
             "original_filename": original_filename, "stored_filename": stored_filename,
             "filepath": filepath, "upload_timestamp": datetime.utcnow(),
-            "row_count": profile.get('row_count', 0),
-            "col_count": profile.get('col_count', 0),
-            "column_info": profile.get('column_info', []), # Store profile info
+            "row_count": profile['row_count'],
+            "col_count": profile['col_count'],
+            "column_info": profile['column_info'],
             "cleaning_steps": [], "analysis_results": {},
             "generated_insights": [], "status": "uploaded",
-            "last_modified": datetime.utcnow() # Add last modified field
+            "last_modified": datetime.utcnow()
         }
-        logging.info("DB document prepared.")
 
-        # Insert into MongoDB
-        logging.info("Attempting database insert...")
         insert_result = analysis_uploads_collection.insert_one(doc)
         upload_id = insert_result.inserted_id
-        logging.info(f"Database insert successful. Upload ID: {upload_id}")
 
-        # Return Success Response
-        response_payload = {
+        return jsonify({
             "message": "File uploaded successfully.",
             "upload_id": str(upload_id),
             "filename": original_filename,
-            "rows": profile.get('row_count', 0),
-            "columns": profile.get('col_count', 0),
-            "column_info": profile.get('column_info', []) # Send profile back
-        }
-        logging.info("--- Exiting /upload_analysis_data (Success) ---")
-        return jsonify(response_payload), 200
+            "rows": profile['row_count'],
+            "columns": profile['col_count'],
+            "column_info": profile['column_info']
+        }), 200
 
-    # --- Specific Error Handling ---
-    except FileNotFoundError as fnf_err:
-         logging.error(f"FileNotFoundError during upload processing: {fnf_err}", exc_info=True)
-         return jsonify({"error": "Server error: File path issue."}), 500
-    except PermissionError as perm_err:
-        logging.error(f"PermissionError during upload processing: {perm_err}", exc_info=True)
-        return jsonify({"error": "Server error: File permission issue. Check folder permissions."}), 500
     except Exception as e:
-        logging.error(f"Unhandled exception during analysis file upload/processing: {e}", exc_info=True)
-        # Attempt cleanup if file was possibly saved before error
-        if 'filepath' in locals() and os.path.exists(filepath):
-            logging.info(f"Cleaning up file {filepath} due to error during processing.")
-            try: os.remove(filepath)
-            except OSError as rm_err: logging.error(f"Failed cleanup {filepath}: {rm_err}")
-        return jsonify({"error": "Server error processing file."}), 500
+        logging.error(f"Upload failed: {e}", exc_info=True)
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception as cleanup_err:
+                logging.warning(f"Cleanup failed: {cleanup_err}")
+        return jsonify({"error": "Server error during upload."}), 500
 
 
 @app.route('/data_cleaner/<upload_id>')
@@ -1533,173 +1501,183 @@ def analysis_history():
 
     return render_template('analysis_history.html', history=history, now=datetime.utcnow())
 
-# --- New Routes ---
+# --- News Agent Routes (Using World News API) ---
 
 @app.route('/news_agent')
 def news_agent_page():
-    # ... (login check) ...
-    api_key_present = bool(NEWS_API_KEY)
-     # --- ADD/VERIFY THIS PRINT ---
-    print(f"--- Flask Route Check: Passing news_api_available = {api_key_present} to template ---") # Add temporary print
+    # --- Minimal check ---
+    key_value_at_route = WORLD_NEWS_API_KEY # Access the global variable directly
+    is_present = bool(key_value_at_route)
+
+    # --- Critical Log ---
+    print(f"--- MINIMAL Route Check '/news_agent': Key Value='{key_value_at_route}', Passing available = {is_present} ---")
+
+    # Directly render, bypassing login checks etc. for this TEST ONLY
     return render_template('news_agent.html',
-                           now=datetime.utcnow(),
-                           news_api_available=api_key_present) # Pass the boolean
+                           news_api_available=is_present,
+                           now=datetime.utcnow()) # Keep now if base template needs it
 
 @app.route('/fetch_live_news')
 def fetch_live_news():
-    """
-    Fetches news articles using the official NewsApiClient library.
-    Defaults to top headlines for 'general' category in 'us'.
-    Can be adapted to use get_everything.
-    """
-    logging.info("--- Enter /fetch_live_news (using NewsApiClient) ---")
+    """Fetches news using the World News API."""
+    logging.info("--- Enter /fetch_live_news (World News API) ---")
 
     if not is_logged_in():
         logging.warning("Fetch failed: Not logged in.")
         return jsonify({"error": "Authentication required"}), 401
 
-    # Check if the client was initialized successfully
-    if not newsapi_client:
-        logging.error("Fetch failed: NewsApiClient not available (check API key).")
-        return jsonify({"error": "News API key not configured or client failed to initialize."}), 503
+    if not WORLD_NEWS_API_KEY:
+        logging.error("Fetch failed: World News API key not configured.")
+        return jsonify({"error": "News API key not configured on server."}), 503
 
-    # --- Parameters ---
-    # Decide whether to use top-headlines or everything
-    # For this example, let's stick to top-headlines like the original intent
-    # but you can easily switch by calling get_everything instead.
+    # --- Parameters for World News API ---
+    # Ref: https://worldnewsapi.com/docs/#Search-News
+    # Use sensible defaults, allow overrides via query parameters
+    api_endpoint = "https://api.worldnewsapi.com/search-news"
 
-    fetch_mode = 'top-headlines' # Or 'everything'
-    query = request.args.get('q') # Allow keyword search via query param
-    category = request.args.get('category', 'general') if not query else None # Category only if no query
-    country = request.args.get('country', 'us') if not query else None # Country only if no query
-    page_size = 25
-    # For 'everything':
-    # from_param = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
-    # sort_by = 'publishedAt'
-    # domains = request.args.get('domains') # e.g., 'bbc.co.uk,techcrunch.com'
+    # Example Parameters (customize as needed)
+    params = {
+        'text': request.args.get('text', 'latest'), # Search query (default to 'latest')
+        'source-countries': request.args.get('source-countries', 'us,gb'), # Example: US, UK
+        'language': request.args.get('language', 'en'),
+        'number': request.args.get('number', 25, type=int), # Number of results
+        'sort': request.args.get('sort', 'publish-time'), # Sort by newest first
+        'sort-direction': request.args.get('sort-direction', 'DESC'),
+        # Add other params like 'earliest-publish-date', 'latest-publish-date', 'news-sources' as needed
+        # 'earliest-publish-date': (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d') # Example: last 24h
+    }
+
+    headers = {
+        # Correct header name as per World News API docs
+        'x-api-key': WORLD_NEWS_API_KEY
+    }
+
+    logging.info(f"Fetching World News API. Endpoint: {api_endpoint}, Params: { {k:v for k,v in params.items() if k != 'api-key'} }") # Log params without key
 
     try:
-        logging.info(f"Fetching news via NewsApiClient (mode: {fetch_mode})")
-        news_data = None
+        response = requests.get(api_endpoint, headers=headers, params=params, timeout=15)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
-        if fetch_mode == 'top-headlines':
-            news_data = newsapi_client.get_top_headlines(
-                q=query,
-                category=category,
-                language='en', # Make language configurable if needed
-                country=country,
-                page_size=page_size
-            )
-        elif fetch_mode == 'everything':
-             # Ensure 'q' or 'sources' or 'domains' is provided for 'everything'
-             if not query : # Add checks for sources/domains if needed
-                 logging.error("Fetch failed: 'q' (query) parameter is required for /everything endpoint.")
-                 return jsonify({"error": "A query parameter 'q' is required for this search type."}), 400
+        news_data = response.json() # World News API returns JSON directly
 
-             from_param = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d') # Default to yesterday
-             sort_by = 'publishedAt'
+        # --- Adapt Response Structure ---
+        # World News API has a different structure than NewsAPI.org
+        # The main list is usually under a 'news' key.
+        articles = news_data.get('news', [])
+        total_results = news_data.get('number', len(articles)) # 'number' in response might be limit, not total found
 
-             news_data = newsapi_client.get_everything(
-                q=query,
-                # sources='bbc-news,the-verge', # Example sources
-                # domains=domains,             # Example domains
-                from_param=from_param,
-                language='en',
-                sort_by=sort_by,
-                page_size=page_size
-                # page=page_num # Add pagination if needed
-             )
-        else:
-             raise ValueError("Invalid fetch_mode specified")
+        # --- Map fields to the structure expected by frontend (if needed) ---
+        # This maintains compatibility with news_agent.js expecting 'title', 'url', 'source.name', etc.
+        mapped_articles = []
+        for article in articles:
+            mapped_articles.append({
+                "title": article.get('title'),
+                "description": article.get('text'), # Use 'text' field for description/summary
+                "content": article.get('text'),    # Use 'text' field for content as well
+                "url": article.get('url'),
+                "urlToImage": article.get('image'), # Use 'image' field
+                "publishedAt": article.get('publish_date'), # Use 'publish_date'
+                "source": {
+                    "id": None, # World News API might not provide a simple source ID like NewsAPI.org
+                    "name": article.get('source_country') or article.get('authors') # Use country or authors as source name? Adjust as needed.
+                 }
+                # Add any other fields your frontend might use
+            })
 
-        # The client library returns a dict similar to the raw API response
-        articles = news_data.get('articles', [])
-        total_results = news_data.get('totalResults', 0)
-
-        logging.info(f"Fetched {len(articles)} articles (Total results: {total_results}) successfully.")
 
         # --- Optional: Store fetched articles in MongoDB ---
-        # (Keep the storage logic from the previous version if desired)
-        # ... (BulkWrite logic here if needed) ...
+        # Adapt the storing logic if you implement it, using the new fields ('id', 'publish_date', etc.)
+        # ... (MongoDB storage logic would go here, adjusted for World News API fields) ...
 
-        return jsonify({"articles": articles, "status": "ok", "totalResults": total_results}) # Return status ok
+        logging.info(f"Fetched {len(mapped_articles)} articles via World News API successfully.")
+        # Return the *mapped* articles so the frontend structure is consistent
+        return jsonify({"articles": mapped_articles, "status": "ok", "totalResults": total_results})
 
-    except NewsAPIException as api_err:
-        # Catch specific errors from the library
-        logging.error(f"NewsAPIException occurred: {api_err}")
-        # The exception object often contains status code and message
-        # Default to 400 Bad Request if status code isn't clear
-        status_code = 400 # Example default
-        # You might need to inspect the structure of NewsAPIException based on the library version
-        # if hasattr(api_err, 'get_code'): status_code = api_err.get_code() # Example hypothetical method
-        return jsonify({"error": f"News API Error: {str(api_err)}"}), status_code
-    except ValueError as val_err:
-        # Catch configuration errors like invalid fetch_mode
-         logging.error(f"Configuration error: {val_err}")
-         return jsonify({"error": f"Server configuration error: {str(val_err)}"}), 500
+    except requests.exceptions.Timeout:
+         logging.error("World News API request timed out.")
+         return jsonify({"error": "Request to news source timed out."}), 504
+    except requests.exceptions.HTTPError as http_err:
+        status_code = http_err.response.status_code
+        error_detail = f"HTTP error {status_code} from news source."
+        try: # Try to parse the JSON error response from World News API / APILayer
+            error_data = http_err.response.json()
+            error_detail = error_data.get("message", error_detail) # Use 'message' field
+            logging.error(f"World News API HTTP error {status_code}. Response: {error_data}")
+        except ValueError:
+            logging.error(f"World News API HTTP error {status_code}. Response was not JSON: {http_err.response.text[:200]}")
+            pass # Use the default error detail
+        # Map common status codes to user-friendly messages
+        if status_code == 401: error_detail = "Invalid News API Key provided."
+        elif status_code == 429: error_detail = "News API rate limit exceeded."
+        elif status_code == 400: error_detail = f"Invalid request sent to news source: {error_detail}"
+
+        return jsonify({"error": error_detail}), status_code
+    except requests.exceptions.RequestException as req_err:
+        logging.error(f"World News API request error: {req_err}")
+        return jsonify({"error": "Could not connect to news source."}), 503
     except Exception as e:
-        # Catch any other unexpected errors
-        logging.error(f"Unexpected error fetching news via NewsApiClient: {e}", exc_info=True)
-        return jsonify({"error": "An unexpected server error occurred."}), 500
+        logging.error(f"Unexpected error fetching World News API: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred while fetching news."}), 500
     finally:
-        logging.info("--- Exiting /fetch_live_news ---")
+        logging.info("--- Exiting /fetch_live_news (World News API) ---")
+
 
 @app.route('/summarize_news', methods=['POST'])
 def summarize_news():
     """Summarizes news content using Gemini."""
+    # This route remains largely the same, as it just takes text content
     if not is_logged_in(): return jsonify({"error": "Authentication required"}), 401
     if model is None: return jsonify({"error": "AI Summarizer not available."}), 503
 
     data = request.get_json()
+    if not data: return jsonify({"error": "Invalid request: No JSON data."}), 400
+
     content_to_summarize = data.get('content')
-    title = data.get('title', 'this news article') # For prompt context
+    title = data.get('title', 'this news article')
 
     if not content_to_summarize:
         return jsonify({"error": "No content provided for summarization."}), 400
 
-    # Basic check if content is just a URL (NewsAPI content can be truncated)
-    # A more robust approach might involve fetching the URL content here if needed
-    is_url = bool(urlparse(content_to_summarize).scheme) and bool(urlparse(content_to_summarize).netloc)
-    if is_url or len(content_to_summarize) < 100: # Arbitrary length check
-        logging.warning("Content too short or is a URL, might not produce good summary.")
-        # Optionally return a specific message or attempt fetch if it's a URL
+    # Check content length, maybe remove URL check if 'text' field is reliable
+    if len(content_to_summarize) < 50: # Adjusted minimum length
+        logging.warning("Content possibly too short for meaningful summary.")
+        # Decide whether to proceed or return warning
+        # return jsonify({"error": "Content too short for summarization."}), 400
 
-    # --- Construct Prompt for Gemini ---
-    # Adjust prompt as needed for desired summary style/length
     prompt = f"""Please provide a concise summary (around 2-3 sentences) of the following news article titled '{title}':
 
     "{content_to_summarize}"
 
-    Focus on the main points and key information.
+    Focus on the main points and key information. Avoid introductory phrases like "The article discusses...".
     """
 
     logging.info("Sending content to Gemini for summarization...")
+    summary = "[AI Error: Failed to generate summary]" # Default
 
     try:
         response = model.generate_content(prompt)
-        summary = "[AI failed to generate summary]"
+        log_gemini_response_details(response, f"summarize_{session.get('user_id')}") # Log Gemini response
 
-        if response.candidates:
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+             block_reason = response.prompt_feedback.block_reason.name
+             summary = f"[AI summary blocked: {block_reason}]"
+             logging.warning(f"Gemini summary BLOCKED. Reason: {block_reason}")
+        elif response.candidates:
              try:
                  summary = response.text.strip()
-                 if not summary:
-                     summary = "[AI returned empty summary]"
-                     logging.warning(f"Gemini returned empty summary. Finish reason: {response.candidates[0].finish_reason.name if response.candidates else 'N/A'}")
-
+                 if not summary: summary = "[AI returned empty summary]"
              except Exception as parse_err:
-                 logging.error(f"Error parsing Gemini summary response: {parse_err}")
-                 summary = "[Error parsing AI summary]"
+                 logging.error(f"Error parsing Gemini summary response: {parse_err}"); summary = "[Error parsing AI summary]"
         else:
-             block_reason = response.prompt_feedback.block_reason if hasattr(response, 'prompt_feedback') else 'Unknown'
-             logging.warning(f"Gemini summarization blocked or failed. Reason: {block_reason}")
-             summary = f"[AI summary generation failed/blocked. Reason: {block_reason}]"
-
-        logging.info("Summary received from Gemini.")
-        return jsonify({"summary": summary})
+             summary = "[AI returned no candidates]"; logging.warning("No candidates from Gemini for summary.")
 
     except Exception as e:
         logging.error(f"Error during Gemini summarization call: {e}", exc_info=True)
-        return jsonify({"error": "Server error during summarization."}), 500
+        # Keep default error message
+
+    logging.info("Summary processing complete.")
+    # Return summary even if it's an error message from AI/parsing
+    return jsonify({"summary": summary})
 
 
 # * NEW Route for Voice Agent Page *

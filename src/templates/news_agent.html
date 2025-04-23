@@ -3,6 +3,7 @@
 {% block title %}News AI Agent{% endblock %}
 
 {% block head_extra %}
+    {# Make sure this CSS file exists and is correct #}
     <link rel="stylesheet" href="{{ url_for('static', filename='news_agent.css') }}">
     {# Add Font Awesome if not already in base.html for icons #}
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -80,11 +81,14 @@
 </div>
 {% endblock %}
 
+{# Ensure this block name matches your base.html template #}
 {% block scripts %}
     {# Pass availability status to JS #}
    <script>
-              const NEWS_API_AVAILABLE = true;
+       // eslint-disable-next-line -- Optional: Add linter ignore comment
+       const NEWS_API_AVAILABLE =  news_api_available|tojson ; 
     </script>
-   <script src="{{ url_for('static', filename='news_agent.js') }}"></script>
+   {# Ensure defer attribute is present for proper script execution order #}
+   <script src="{{ url_for('static', filename='news_agent.js') }}" defer></script>
 
-{% endblock %}
+{% endblock scripts %}
